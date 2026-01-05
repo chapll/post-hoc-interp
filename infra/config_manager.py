@@ -31,13 +31,21 @@ class JobExpConfig:
 
 
 @dataclass
+class ModelConfig:
+    """Model configuration options."""
+
+    name: str = field(default="default", metadata={"help": "Which model to train", "choices": ["default"]})  # TODO: Add model names when we have more models
+    size: str = field(default="5B", metadata={"help": "Which model size to train"})  # TODO: Add model sizes when we have more model sizes
+
+
+@dataclass
 class TrainingConfig:
     """Training configuration options."""
 
-    dataset_path = field(default=None, metadata={"help": "Path to the dataset in the file system."})
-    global_batch_size = field(default=8, metadata={"help": "Global batch size."})
-    grad_accum_steps = field(default=1, metadata={"help": "Grad accumulatation steps."})
-    warmup_steps = field(default=50, metadata={"help": "The number of steps for lr scheduler warmup."})
+    dataset_path = field(default=None, metadata={"help": "Path to the dataset in the file system"})
+    global_batch_size = field(default=8, metadata={"help": "Global batch size"})
+    grad_accum_steps = field(default=1, metadata={"help": "Grad accumulatation steps"})
+    warmup_steps = field(default=50, metadata={"help": "The number of steps for lr scheduler warmup"})
     steps = field(default=5000, metadata={"help": "How many train steps to run"})
     gc_freq = field(default=50, metadata={"help": "Python garbage control scheduling interval, in steps"})
 
@@ -49,9 +57,27 @@ class EvalConfig:
     output_dir: str = field(default="./output", metadata={"help": "Directory to save generated results"})
 
 
+
+@dataclass
+class CheckpointConfig:
+    """Checkpoint configuration options."""
+
+    init_state_dir: Optional[str] = field(default=None, metadata={"help": "Path to the model weights"})
+    interval: int = field(default=0, metadata={"help": "Interval at which to save checkpoints"})
+    resume: bool = field(default=False, metadata={"help": "Resume experiment", "action": "store_true"})
+    resume_step: int = field(default=-1, metadata={"help": "At which step to resume from checkpoint. Use -1 for auto-detect latest"})
+    timeout_minutes: int = field(default=0, metadata={"help": "Duration before the job times out, used for checkpointing before timeout"})
+
+
 @dataclass
 class WandBConfig:
-    
+    """Weights & Biases configuration options."""
+
+    disable: bool = field(default=False, metadata={"help": "Disable WandB logging", "action": "store_true"})
+    project: str = field(default="cs224n", metadata={"help": "WandB project name"})
+    entity: str = field(default="chapll", metadata={"help": "WandB entity name"})
+    log_interval: int = field(default=50, metadata={"help": "WandB log interval"})
+    alert: bool = field(default=False, metadata={"help": "Send a notification when a job is completed", "action": "store_true"})
 
 
 def string_list(input_str: str) -> List[str]:
@@ -83,13 +109,17 @@ class JobConfig:
 
     # Define class-level attributes for editor intellisense
     job: JobExpConfig
+    model: ModelConfig
     training: TrainingConfig
     eval: EvalConfig
+    wandb: WandBConfig
 
     # Map config names to their corresponding dataclass types
     _config_types: Dict[str, Type] = {
         "job": JobExpConfig,
+        "model": ModelConfig,
         "training": TrainingConfig,
+        "wandb": WandBConfig,
     }
 
     def __init__(self, eval_mode=False):
@@ -219,6 +249,9 @@ class JobConfig:
         return args_dict
 
     def _validate_config(self):
+        assert self.model.name, "model.name is required"
+        assert self.model.size, "model.size is required"
+
         assert osp.isabs(self.job.dump_folder), "dump_folder should be an absolute path"
 
     def parse_args_from_command_line(self, args_list) -> Tuple[argparse.Namespace, argparse.Namespace]:
