@@ -1,0 +1,10 @@
+[job]
+exp_name = "test-job"
+
+[training]
+steps = 100000
+
+[wandb]
+project = "test-project"
+entity = "chapll"
+log_interval = 50
