@@ -4,7 +4,6 @@ exp_name = "test-job"
 [training]
 steps = 100000
 
-[wandb]
-project = "test-project"
-entity = "chapll"
-log_interval = 50
+[checkpoint]
+interval = 1000
+timeout_minutes = 10
