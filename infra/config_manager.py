@@ -36,6 +36,7 @@ class ModelConfig:
 
     name: str = field(default="default", metadata={"help": "Which model to train", "choices": ["default"]})  # TODO: Add model names when we have more models
     size: str = field(default="5B", metadata={"help": "Which model size to train"})  # TODO: Add model sizes when we have more model sizes
+    lr: float = field(default=1e-4, metadata={"help": "Learning rate"})  # NOTE: This is just a placeholder
 
 
 @dataclass
