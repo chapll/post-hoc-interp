@@ -82,8 +82,8 @@ class Checkpointer:
         set_state_dict(
             self.model,
             self.optimizer,
-            model_state_dict=state_dict[MODEL_STATE_DICT_KEY],
-            optim_state_dict=state_dict[OPTIMIZER_STATE_DICT_KEY],
+            model_state_dict=state_dict[MODEL_STATE_DICT_KEY],  # type: ignore
+            optim_state_dict=state_dict[OPTIMIZER_STATE_DICT_KEY],  # type: ignore
         )
 
         self.data_module.sampler.load_state_dict(state_dict[DATAMODULE_STATE_DICT_KEY])
