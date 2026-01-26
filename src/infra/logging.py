@@ -13,7 +13,6 @@ import torch
 import wandb
 from omegaconf import DictConfig, OmegaConf
 
-from src.models.configs import ModelConfig
 
 logger = logging.getLogger()
 
@@ -112,7 +111,7 @@ class MultiLogger:
             self.local_logger.write(text + "\n")
             self.local_logger.flush()
 
-    def init_log(self, cfg: DictConfig, model_config: ModelConfig, param_count: int):
+    def init_log(self, cfg: DictConfig, model_config, param_count: int):
         self.wandb_logger.initialize(cfg)
 
         timezone = pytz.timezone("America/Los_Angeles")

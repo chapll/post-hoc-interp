@@ -89,7 +89,7 @@ SLURM_ACCOUNT="your-account"
 - **optimizers.py**: AdamW with cosine/linear LR schedules. Supports separate learning rates for TTT/SSM parameters vs base parameters.
 
 **Models (`src/models/`):**
-- **configs.py**: `ModelConfig` base class with `get_preset()` factory method. Subclass and define `PREDEFINED_CONFIGS` dict for model variants.
+- **mlp.py**: Simple MLP for testing the training infrastructure.
 
 ## Key Patterns
 
