@@ -1,9 +1,0 @@
-[job]
-exp_name = "test-job"
-
-[training]
-steps = 100000
-
-[checkpoint]
-interval = 1000
-timeout_minutes = 10

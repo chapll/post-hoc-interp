@@ -1,0 +1,34 @@
+# @package _global_
+# Example personal submitit config
+#
+# Copy this to configs/deploy/submitit_yourname.yaml and customize
+# Then use: uv run train +deploy=submitit_yourname +experiment=...
+#
+# This file is gitignored via configs/deploy/submitit_*.yaml pattern
+
+defaults:
+  - override hydra/launcher: submitit_slurm
+
+# Override deploy_paths for your setup
+deploy_paths:
+  exp_dir: /your/personal/exp/dir
+  data_dir: /your/personal/data/dir
+
+hydra:
+  mode: MULTIRUN
+  sweep:
+    dir: ${deploy_paths.exp_dir}/${job.exp_name}
+    subdir: ${hydra.job.num}
+  launcher:
+    partition: your-partition
+    account: your-account  # remove if not needed
+
+    nodes: 1
+    tasks_per_node: 1
+    gpus_per_node: 8
+    cpus_per_task: 32
+    timeout_min: 60
+    mem_gb: 256
+
+    setup: null
+    additional_parameters: {}
