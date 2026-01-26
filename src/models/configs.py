@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
 from typing import Optional
 
-from infra.config_manager import JobConfig
+from omegaconf import DictConfig
 
 
 @dataclass
@@ -11,29 +11,29 @@ class ModelConfig(ABC):
     """Abstract base class for model configurations."""
 
     @classmethod
-    def get_preset(cls, preset: str, job_config: Optional[JobConfig] = None):
+    def get_preset(cls, preset: str, cfg: Optional[DictConfig] = None):
         """Factory method to create a config from a preset name."""
         if not hasattr(cls, "PREDEFINED_CONFIGS"):
-             raise NotImplementedError(f"{cls.__name__} must define PREDEFINED_CONFIGS")
-             
+            raise NotImplementedError(f"{cls.__name__} must define PREDEFINED_CONFIGS")
+
         # We access the subclass's dictionary directly
         configs_dict = getattr(cls, "PREDEFINED_CONFIGS")
-        
+
         if preset not in configs_dict:
-             raise ValueError(f"Preset '{preset}' not found in {cls.__name__}.")
+            raise ValueError(f"Preset '{preset}' not found in {cls.__name__}.")
 
         # Instantiate the subclass
         model_config = cls(**configs_dict[preset])
 
-        if job_config is not None:
-            model_config.update(job_config)
+        if cfg is not None:
+            model_config.update(cfg)
 
         return model_config
 
     @abstractmethod
-    def update(self, job_config: JobConfig):
+    def update(self, cfg: DictConfig):
         """
-        Map JobConfig fields to their specific attributes within the ModelConfig.
+        Map config fields to their specific attributes within the ModelConfig.
         """
         pass
 
@@ -45,7 +45,7 @@ class ModelConfig(ABC):
 class HNetConfig(ModelConfig):
     name: str = "hnet"
     model_dim: int = 1024
-    
+
     # Example specific fields
     num_layers: int = 12
 
@@ -56,6 +56,6 @@ class HNetConfig(ModelConfig):
         }
     }
 
-    def update(self, job_config: JobConfig):
+    def update(self, cfg: DictConfig):
         # Implement the specific mapping logic here
         pass

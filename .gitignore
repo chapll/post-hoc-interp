@@ -205,3 +205,13 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Hydra outputs
+outputs/
+
+# Personal deploy configs (copy submitit_example.yaml to your own)
+configs/deploy/submitit_*.yaml
+!configs/deploy/submitit_example.yaml
+
+# Experiment outputs
+exp/

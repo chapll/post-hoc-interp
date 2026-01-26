@@ -11,9 +11,9 @@ from functools import partial
 import pytz
 import torch
 import wandb
+from omegaconf import DictConfig, OmegaConf
 
-from infra.config_manager import JobConfig
-from models.configs import ModelConfig
+from src.models.configs import ModelConfig
 
 logger = logging.getLogger()
 
@@ -21,55 +21,67 @@ _multi_logger = None
 
 DEFAULT_TIMEZONE = pytz.timezone("America/Los_Angeles")
 
+
+def get_rank() -> int:
+    """Get distributed rank, returning 0 if distributed isn't initialized (single-GPU)."""
+    if torch.distributed.is_initialized():
+        return torch.distributed.get_rank()
+    return 0
+
+
 class WandBLogger:
-    def __init__(self, job_config: JobConfig):
+    def __init__(self, cfg: DictConfig):
         # Only log on one rank
-        self.enable = not job_config.wandb.disable
-        self.is_main = torch.distributed.get_rank() == 0  # type: ignore
+        self.enable = not cfg.wandb.disable
+        self.is_main = get_rank() == 0
 
         self.job_id = None
 
-    def initialize(self, job_config: JobConfig):
+    def initialize(self, cfg: DictConfig):
         if not self.enable:
             return
+
+        config_dict = OmegaConf.to_container(cfg, resolve=True)
 
         # If is main then initialize WandB job
         if self.is_main:
             # Resume job
             if self.job_id is not None:
                 wandb.init(
-                    project=job_config.wandb.project,
-                    entity=job_config.wandb.entity,
+                    project=cfg.wandb.project,
+                    entity=cfg.wandb.entity,
                     id=self.job_id,
                     resume="allow",
-                    config=job_config.to_dict(),
+                    config=config_dict,
                 )
                 assert wandb.run is not None, "WandB run failed to initialize."
 
-                if job_config.wandb.alert:
+                if cfg.wandb.alert:
                     wandb.run.alert(
-                        title=f"{job_config.job.exp_name} resuming",
-                        text=f"Resuming '{job_config.job.exp_name}' at wandb_id f{self.job_id}.",
+                        title=f"{cfg.job.exp_name} resuming",
+                        text=f"Resuming '{cfg.job.exp_name}' at wandb_id f{self.job_id}.",
                     )
             else:
                 wandb.init(
-                    project=job_config.wandb.project,
-                    entity=job_config.wandb.entity,
-                    name=job_config.job.exp_name,
-                    config=job_config.to_dict(),
+                    project=cfg.wandb.project,
+                    entity=cfg.wandb.entity,
+                    name=cfg.job.exp_name,
+                    config=config_dict,
                     resume="allow",
                 )
                 assert wandb.run is not None, "WandB run failed to initialize."
-                if job_config.wandb.alert:
+                if cfg.wandb.alert:
                     wandb.run.alert(
-                        title=f"{job_config.job.exp_name} launched",
-                        text=f"Starting '{job_config.job.exp_name}'",
+                        title=f"{cfg.job.exp_name} launched",
+                        text=f"Starting '{cfg.job.exp_name}'",
                     )
                 self.job_id = wandb.run.id
 
-        obj_list = [self.job_id]
-        torch.distributed.broadcast_object_list(obj_list, src=0)  # type: ignore
-        self.job_id = obj_list[0]
+        # Broadcast job_id to all ranks (only needed in distributed mode)
+        if torch.distributed.is_initialized():
+            obj_list = [self.job_id]
+            torch.distributed.broadcast_object_list(obj_list, src=0)
+            self.job_id = obj_list[0]
 
     def log(self, stats, step):
         if self.enable:
@@ -77,15 +89,15 @@ class WandBLogger:
 
 
 class MultiLogger:
-    def __init__(self, job_config: JobConfig):
-        self.enable = torch.distributed.get_rank() == 0  # type: ignore
+    def __init__(self, cfg: DictConfig):
+        self.enable = get_rank() == 0
         init_logger()
 
-        self.exp_name = job_config.job.exp_name
-        self.multi_dir = osp.join(job_config.job.dump_folder, job_config.job.exp_name)
+        self.exp_name = cfg.job.exp_name
+        self.multi_dir = cfg.deploy_paths.run_dir
         self.file_name = get_unique_log_file(osp.join(self.multi_dir, "log.txt"))
 
-        self.wandb_logger = WandBLogger(job_config)
+        self.wandb_logger = WandBLogger(cfg)
 
         os.makedirs(self.multi_dir, mode=0o777, exist_ok=True)
 
@@ -100,8 +112,8 @@ class MultiLogger:
             self.local_logger.write(text + "\n")
             self.local_logger.flush()
 
-    def init_log(self, job_config: JobConfig, model_config: ModelConfig, param_count: int):
-        self.wandb_logger.initialize(job_config)
+    def init_log(self, cfg: DictConfig, model_config: ModelConfig, param_count: int):
+        self.wandb_logger.initialize(cfg)
 
         timezone = pytz.timezone("America/Los_Angeles")
         formatted_current_time = datetime.now(timezone).strftime("%Y-%m-%d %H:%M:%S %Z%z")
@@ -115,15 +127,13 @@ class MultiLogger:
             f"==================================\n",
         )
 
-        self.write(f"Starting job: {job_config.job.exp_name}\n")
+        self.write(f"Starting job: {cfg.job.exp_name}\n")
 
         file_only_write("============= Training Config ===============\n")
-        file_only_write(f"{job_config}\n\n")
+        file_only_write(f"{OmegaConf.to_yaml(cfg)}\n\n")
 
         self.write("============= Model Config ===============\n", log_terminal=False)
-        self.write(
-            f"Model Name: {job_config.model.name}\nParam count: {param_count:,}\n{model_config}\n\n"
-        )
+        self.write(f"Model Name: {cfg.model.name}\nParam count: {param_count:,}\n{model_config}\n\n")
 
         # Get ready for training logs
         self.write("============= Training ===============\n", log_terminal=False)
@@ -174,21 +184,14 @@ class MultiLogger:
 
 
 def init_logger():
-    logger.setLevel(logging.INFO)
-    ch = logging.StreamHandler()
-    ch.setLevel(logging.INFO)
-    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-    ch.setFormatter(formatter)
-    logger.addHandler(ch)
-
-    # suppress verbose torch.profiler logging
+    # Hydra already configures terminal logging, just suppress torch.profiler noise
     os.environ["KINETO_LOG_LEVEL"] = "5"
 
 
-def get_logger(job_config: JobConfig) -> MultiLogger:
+def get_logger(cfg: DictConfig) -> MultiLogger:
     global _multi_logger
     if _multi_logger is None:
-        _multi_logger = MultiLogger(job_config)
+        _multi_logger = MultiLogger(cfg)
 
     return _multi_logger
 

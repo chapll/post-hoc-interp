@@ -159,7 +159,7 @@ wheels = [
 [[package]]
 name = "cs224n-final-proj"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "einops" },
     { name = "hydra-core" },

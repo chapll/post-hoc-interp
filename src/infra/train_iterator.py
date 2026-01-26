@@ -8,9 +8,9 @@ from datetime import datetime, timedelta
 
 import torch
 
-from infra.checkpointer import Checkpointer
-from infra.logging import MultiLogger, get_checkpoint_dir
-from infra.utils import get_time
+from src.infra.checkpointer import Checkpointer
+from src.infra.logging import MultiLogger, get_checkpoint_dir
+from src.infra.utils import get_time
 
 
 class TrainingIterator:
