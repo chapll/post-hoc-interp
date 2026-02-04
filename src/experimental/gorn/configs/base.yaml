@@ -1,0 +1,31 @@
+model:
+  name: "Qwen/Qwen3-8B"
+  dtype: "bfloat16"
+  max_new_tokens: 8192
+
+generation:
+  temperature: 0.6
+  top_p: 0.95
+  top_k: 20
+  do_sample: true
+
+data:
+  datasets:
+    - gsm_symbolic
+    - folio
+    - strategyqa
+  problems_per_dataset: 300
+  traces_per_problem: 5
+
+storage:
+  format: "safetensors"
+  layer_subset: [0, 4, 8, 12, 16, 20, 24, 28, 32, 35]
+  top_k_logits: 50
+  save_attention: false
+
+gpus: [0]
+seed: 137
+
+paths:
+  data_dir: "src/experimental/gorn/data"
+  experiments_dir: "src/experimental/gorn/experiments"
