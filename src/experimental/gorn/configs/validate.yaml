@@ -1,0 +1,22 @@
+# Validation-specific config. Merged on top of base.yaml.
+# Small scale: 6 problems per dataset, short generation for speed.
+
+data:
+  datasets:
+    - gsm_symbolic
+    - folio
+    - strategyqa
+  problems_per_dataset: 6
+
+model:
+  max_new_tokens: 4096
+
+storage:
+  layer_subset: [0, 4, 8, 12, 16, 20, 24, 28, 32, 35]
+  top_k_logits: 50
+  save_attention: false
+
+validation:
+  verify_round_trip: true
+  verify_shapes: true
+  verify_think_tokens: true
