@@ -97,3 +97,10 @@ SLURM_ACCOUNT="your-account"
 - Checkpoints auto-resume via `checkpoint.resume=true` (uses latest step by default)
 - Garbage collection is manually controlled via `GarbageCollection` class to avoid stragglers
 - Config accessible via dot notation: `cfg.job.exp_name`, `cfg.training.steps`, etc.
+
+## Strict Rules
+
+- **No mock/placeholder/fallback implementations.** Every component must be real. If something fails, it must fail loudly so the error can be traced to the exact code that caused it. Never silently return fake data or fall back to a simpler path.
+- **No emoji.** Not in code, not in comments, not in print statements, not in logs.
+- **Plain text output.** Use simple print statements. No excessive spacing, no decorative banners, no fancy formatting.
+- **Do not use seed 42.** Use any other seed value.

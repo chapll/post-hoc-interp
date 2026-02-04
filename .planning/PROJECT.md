@@ -20,16 +20,19 @@ Identify the exact internal transition point where a model shifts from "searchin
 
 - [ ] Multi-GPU trace generation pipeline: run Qwen 3.0 8B with thinking mode, collect reasoning traces with residual stream activations, configurable GPU selection (specific IDs) and DDP across selected GPUs
 - [ ] Dataset loading for GSM-Symbolic (verification subset), FOLIO (binary subset), StrategyQA -- 300 problems per dataset, configurable N traces per problem (5 for probing, 20 for differential analysis)
-- [ ] Trace-specific transition detection: logistic regression probe on residual stream activations at each token position, identify transition point T_i where probe confidence consistently exceeds 95%
+- [ ] Trace-specific transition detection: "Train-on-End, Test-on-Middle" protocol -- train single logistic regression probe on Pre-Handoff Window (3 tokens before final </think>) of correct traces, apply to every intermediate token inside <think> blocks to identify transition point T_i where probe confidence consistently exceeds 95%
 - [ ] Intrinsic phase analysis: cosine similarity dynamics of residual stream (step-wise similarity S_t), test hypothesis that pre-transition states show high drift and post-transition states show high stability
 - [ ] Differential state analysis: cluster traces into "Concise" vs "Performative" groups, isolate performativity vector by subtracting mean residual stream states aligned at T_i
 - [ ] Causal steering validation: inject performativity vector into concise traces to induce unnecessary generation, inject inverse into verbose traces to induce early termination
 - [ ] Attention pattern classification: classify attention heads as "Reasoning" vs "Consistency" heads, analyze whether post-transition tokens are dominated by consistency heads
-- [ ] Baseline comparisons: greedy pruning, PNS-based optimization, P-ALIGN binary search
-- [ ] Quantitative evaluation: probe AUROC at intermediate steps, token reduction ratio (1 - T/n), steering success rate
-- [ ] Qualitative evaluation: attention pattern visualizations for pre/post transition regions
-- [ ] Saved annotated traces: each trace stored with per-token probe confidence, transition point, token classification (necessary vs performative)
-- [ ] Paper-ready figures: transition point distributions, cosine similarity phase plots, steering success rates, attention pattern heatmaps, ablation results
+- [ ] Cox 2x2 classification: classify post-transition CoT into Sound Reasoning / Non-entailment / Confabulation / Hallucination using LLM-based CoT evaluation
+- [ ] IPHR reversed question pairs: create reversed versions of problems to detect implicit bias; compare CoT patterns between original and reversed
+- [ ] Unfaithfulness pattern classification: detect Fact Manipulation, Argument Switching, Answer Flipping in post-transition CoT
+- [ ] Baseline comparisons: greedy pruning, PNS-based optimization, P-ALIGN binary search, entropy-based detection
+- [ ] Quantitative evaluation: probe AUROC at intermediate steps, token reduction ratio (1 - T/n), steering success rate, answer preservation rate
+- [ ] Qualitative evaluation: attention pattern visualizations for pre/post transition regions, 2x2 framework distribution plots
+- [ ] Saved annotated traces: each trace stored with per-token probe confidence, transition point, token classification (necessary vs performative), 2x2 category
+- [ ] Paper-ready figures: transition point distributions, cosine similarity phase plots, steering dose-response curves (alpha -8 to +8), attention pattern heatmaps, ablation results, 2x2 classification breakdowns
 
 ### Out of Scope
 
@@ -37,6 +40,45 @@ Identify the exact internal transition point where a model shifts from "searchin
 - Models other than Qwen 3.0 8B -- scope limited to one model for depth over breadth
 - Training or fine-tuning Qwen -- this is an analysis project, model is used inference-only
 - Real-time or interactive demo -- research code, not a product
+
+## Methodology References
+
+### Cox (2025) -- "Post-hoc reasoning in chain of thought"
+Key distinction: Cox probes at the **last prompt token** (before CoT begins) to show models encode the answer before reasoning starts. Our project extends this to the **entire reasoning trace** to find the exact emergence point T_i.
+
+Key methods to integrate:
+- **"Train-on-End, Test-on-Middle" probing protocol**: Train a single logistic regression probe on the "Pre-Handoff Window" (the 3 natural language tokens immediately preceding the FINAL `</think>` token) of all correct traces. This learns the "Platonic Ideal" of the answer state. Then apply this fixed probe to every intermediate token position to detect T_i -- the first token where probe confidence consistently exceeds 95%.
+- **Steering with probe weight vectors**: Use the learned probe's weight vector as the steering direction. Sweep alpha from -8 to +8 to produce dose-response curves. Positive alpha should increase probability of probed answer, negative should decrease it.
+- **2x2 classification framework**: Classify post-transition CoT chains into four categories based on (probe prediction correct/incorrect) x (CoT supports answer/contradicts answer):
+  - Sound Reasoning: probe correct, CoT supports answer
+  - Non-entailment: probe correct, CoT does not support answer
+  - Confabulation: probe incorrect, CoT supports answer
+  - Hallucination: probe incorrect, CoT contradicts answer
+- **LLM-based CoT classification**: Use a separate LLM to evaluate whether the CoT chain logically supports the final answer (for the 2x2 framework above).
+
+### Probing Protocol -- Critical Details
+- **Context vs Readout**: Feed the full sequence including `<think>` and `</think>` tokens in the forward pass (autoregressive causal validity). But SKIP probing the `<think>` token itself (geometric outlier). Start probing at the first natural language token (k=1).
+- **Multi-block handling**: Primarily filter for traces with a single contiguous `<think>...</think>` block. For multiple disjoint blocks: feed entire context to model, but probe ONLY inside valid `<think>` regions, never inter-block text (distributional shift). Track and report number of filtered traces. If >20% have multiple blocks, fallback to analyzing only the final contiguous block.
+- **Training target**: Always train on the 3 tokens before the FINAL `</think>` -- intermediate `</think>` tokens in multi-block traces represent "done with this thought," not "solved the problem."
+- **Probe only correct traces for training**: The probe learns the answer state from traces that actually got the right answer.
+- **Sondej contrast**: Unlike Sondej's readout-based prompting ("Therefore the answer is...") which may artificially force decision collapse, we use passive linear probing on the residual stream to detect latent knowledge states before they are formulated as output tokens.
+
+### Arcuschin et al. (2025) -- "Chain-of-Thought Reasoning In The Wild Is Not Always Faithful"
+Key methods to integrate:
+- **Implicit Post-Hoc Reasoning (IPHR) via reversed question pairs**: For each problem, create a reversed version where the correct answer is flipped. Compare CoT patterns between original and reversed versions. If the model shows bias toward the original answer even in the reversed version, this indicates unfaithful reasoning.
+- **Unfaithfulness pattern taxonomy**: Classify detected unfaithful CoT into specific patterns:
+  - Fact Manipulation: CoT introduces incorrect facts to justify the answer
+  - Argument Switching: CoT switches reasoning strategy mid-chain to arrive at predetermined answer
+  - Answer Flipping: CoT reasoning points to one answer but the model outputs a different one
+- **Bias probing**: Test whether model's internal representations show bias toward specific answers independent of the reasoning chain.
+
+### Qwen 3.0 8B -- Implementation Details
+- Model: `Qwen/Qwen3-8B` from HuggingFace
+- Architecture: 36 layers, 32 query heads, 8 KV heads (GQA), 4096 hidden dim, SwiGLU MLP
+- Thinking mode: `enable_thinking=True` in generation config
+- Think token boundary: token ID 151668 (`</think>`)
+- Sampling parameters (required for thinking mode, DO NOT use greedy): Temperature=0.6, TopP=0.95, TopK=20, MinP=0
+- Softcapping: 128K context window, RoPE positional encoding
 
 ## Context
 
@@ -48,6 +90,7 @@ Identify the exact internal transition point where a model shifts from "searchin
 - Hardware: A100 80GB GPUs, 4+ available
 - Interpretability library: nnsight (hooks-based, works with any HF model)
 - Sampling parameters per Qwen 3.0 thinking mode docs: Temperature=0.6, TopP=0.95, TopK=20, MinP=0
+- Dataset conversion to binary verification: must use ground truth labels from each dataset to construct True/False questions. CRITICAL: 50/50 True/False balance with plausible distractors to prevent sycophancy bias. "Is the answer X?" with X=correct 50% and X=plausible_distractor 50%. Distractors must be close perturbations (e.g., 100->98), not random numbers, so the model must actually verify. Without this balance, probes may learn "user suggestion" (sycophancy) rather than "verified truth" (reasoning).
 
 ## Constraints
 
@@ -72,4 +115,4 @@ Identify the exact internal transition point where a model shifts from "searchin
 | DDP + specific GPU selection | Shared cluster requires targeting specific GPUs; DDP needed for throughput on large trace generation | -- Pending |
 
 ---
-*Last updated: 2026-02-04 after initialization*
+*Last updated: 2026-02-04 after probing methodology correction (Train-on-End/Test-on-Middle, multi-block handling, special token protocol)*
