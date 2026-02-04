@@ -15,6 +15,7 @@ downloads/
 eggs/
 .eggs/
 lib/
+!src/experimental/gorn/lib/
 lib64/
 parts/
 sdist/
@@ -215,3 +216,6 @@ configs/deploy/submitit_*.yaml
 
 # Experiment outputs
 exp/
+
+# Planning docs (local only)
+.planning/

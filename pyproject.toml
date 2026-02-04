@@ -1,18 +1,22 @@
 [project]
-name = "cs224n-final-proj"
+name = "post-hoc-interp"
 version = "0.1.0"
-description = "final project repository for stanford cs224n"
+description = ""
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "datasets>=4.5.0",
     "einops>=0.8.1",
     "hydra-core>=1.3.2",
     "hydra-submitit-launcher>=1.2.0",
     "matplotlib>=3.10.8",
+    "nnsight>=0.5.15",
     "numpy>=2.4.1",
     "omegaconf>=2.3.0",
     "python-dotenv>=1.2.1",
     "pytz>=2025.2",
+    "safetensors>=0.7.0",
+    "scikit-learn>=1.8.0",
     "torch==2.9.0",
     "tqdm>=4.67.1",
     "wandb>=0.23.1",
