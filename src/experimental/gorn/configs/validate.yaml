@@ -9,13 +9,14 @@ data:
   problems_per_dataset: 6
 
 model:
-  # Shorter generation for validation. Full-length traces need dedicated GPUs.
-  max_new_tokens: 512
+  # Full generation so traces complete with </think> token.
+  # Requires dedicated GPU access (no sharing with other processes).
+  max_new_tokens: 4096
 
 storage:
-  # Full layer subset. With 512 max tokens, this fits in ~20GB per worker.
-  # Requires dedicated GPU access (no sharing with other processes).
-  layer_subset: [0, 4, 8, 12, 16, 20, 24, 28, 32, 35]
+  # Reduced layer subset for validation to fit long traces in memory.
+  # Full 10-layer capture at production scale uses chunked processing.
+  layer_subset: [0, 16, 35]
   top_k_logits: 50
   save_attention: false
 

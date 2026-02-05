@@ -18,6 +18,7 @@ Usage:
         --config src/experimental/gorn/configs/validate.yaml --gpus 0,1
 """
 
+import gc
 import sys
 import tempfile
 
@@ -446,11 +447,17 @@ def validate_model_and_traces(cfg, all_problems, tmp_dir):
                 f"{len(prepared)} tensors compared",
             )
 
-    # Free model memory before multi-GPU section
+    # Free model memory before multi-GPU section.
+    # Must gc.collect() before empty_cache() so Python releases all references first.
     del model
     del tokenizer
+    gc.collect()
     torch.cuda.empty_cache()
-    print("\nSingle-GPU model freed.")
+    gpu_mem_free = torch.cuda.mem_get_info(primary_gpu)
+    print(
+        f"\nSingle-GPU model freed. GPU {primary_gpu}: "
+        f"{gpu_mem_free[0] / (1024**3):.1f} GB free / {gpu_mem_free[1] / (1024**3):.1f} GB total"
+    )
 
 
 # =============================================================================
