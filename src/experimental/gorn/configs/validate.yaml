@@ -9,11 +9,12 @@ data:
   problems_per_dataset: 6
 
 model:
-  # Use shorter generation for validation to avoid OOM during activation capture.
-  # Full-length traces (4096+) require chunked capture or reduced layer subset.
+  # Shorter generation for validation. Full-length traces need dedicated GPUs.
   max_new_tokens: 512
 
 storage:
+  # Full layer subset. With 512 max tokens, this fits in ~20GB per worker.
+  # Requires dedicated GPU access (no sharing with other processes).
   layer_subset: [0, 4, 8, 12, 16, 20, 24, 28, 32, 35]
   top_k_logits: 50
   save_attention: false

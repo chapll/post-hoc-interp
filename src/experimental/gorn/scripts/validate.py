@@ -175,7 +175,9 @@ def validate_model_and_traces(cfg, all_problems, tmp_dir):
     model, tokenizer = load_model(gpu_id=primary_gpu)
     print("Model loaded.")
 
-    traces_per_dataset = 2
+    # Generate 1 trace per dataset to reduce memory pressure during validation.
+    # This validates the full pipeline; scale testing happens in Phase 2.
+    traces_per_dataset = 1
 
     for ds_name, problems in all_problems.items():
         subset = problems[:traces_per_dataset]
