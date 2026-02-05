@@ -257,10 +257,13 @@ def run_parallel_isolated(
         [len(c) for c in chunks],
     )
 
-    # Start all workers as independent processes
+    # Start all workers as independent processes.
+    # Must use 'spawn' context (not default 'fork') because CUDA cannot be
+    # re-initialized in a forked subprocess.
+    ctx = mp.get_context("spawn")
     processes: list[tuple[int, int, mp.Process]] = []
     for rank, gpu_id in enumerate(gpu_ids):
-        p = mp.Process(
+        p = ctx.Process(
             target=_isolated_worker_wrapper,
             args=(worker_fn, rank, gpu_id, chunks[rank], cfg),
         )
