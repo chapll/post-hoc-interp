@@ -5,7 +5,12 @@ model:
   max_new_tokens: 4096
 
 data:
-  traces_per_problem: 5
+  # Swapped-label protocol: "swapped" uses Rho/Tau tokens with A/B configs,
+  # "yesno" uses traditional Yes/No for backward compatibility.
+  label_protocol: "swapped"
+  # Reduced from 5 to 3 to offset config doubling (A + B variants).
+  # Final trace count: ~400 problems x 2 configs x 3 traces = ~2400 traces.
+  traces_per_problem: 3
   # GSM-Symbolic: 100 fresh + 100 original = 200 problems
   # FOLIO: 100 problems (50 Yes + 50 No)
   # StrategyQA: 100 problems (50 Yes + 50 No)

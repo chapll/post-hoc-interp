@@ -72,6 +72,13 @@ Key methods to integrate:
   - Answer Flipping: CoT reasoning points to one answer but the model outputs a different one
 - **Bias probing**: Test whether model's internal representations show bias toward specific answers independent of the reasoning chain.
 
+### Swapped-Label Probing Protocol
+To eliminate the confound where probes detect hypothetical reasoning about "Yes"/"No" tokens rather than abstract validity, we use Rho/Tau output tokens instead of Yes/No. Each problem is generated under two complementary label mappings:
+- Config A: Valid=Rho, Invalid=Tau
+- Config B: Valid=Tau, Invalid=Rho
+
+With both configs in training data, Rho/Tau have zero correlation with the validity label, forcing the probe to find the abstract logical signal. The `ground_truth` field retains Yes/No for abstract validity; only the output tokens change.
+
 ### Qwen 3.0 8B -- Implementation Details
 - Model: `Qwen/Qwen3-8B` from HuggingFace
 - Architecture: 36 layers, 32 query heads, 8 KV heads (GQA), 4096 hidden dim, SwiGLU MLP
@@ -113,6 +120,7 @@ Key methods to integrate:
 | 3 datasets with different reasoning types | GSM-Symbolic (math), FOLIO (logic), StrategyQA (world knowledge) cover different reasoning modalities | -- Pending |
 | Configurable trace count per problem | 5 traces for standard probing, 20 for differential state analysis -- both from the start | -- Pending |
 | DDP + specific GPU selection | Shared cluster requires targeting specific GPUs; DDP needed for throughput on large trace generation | -- Pending |
+| Swapped Rho/Tau labels over Yes/No | Eliminates probe confound from detecting surface token mentions during reasoning; forces probe to find abstract validity signal | Implemented |
 
 ---
 *Last updated: 2026-02-04 after probing methodology correction (Train-on-End/Test-on-Middle, multi-block handling, special token protocol)*

@@ -361,6 +361,10 @@ def capture_worker(rank, gpu_id, trace_items, cfg):
                 "is_fresh",
                 "seed",
                 "num_think_blocks",
+                "prompt_config",
+                "label_mapping",
+                "valid_token",
+                "invalid_token",
             ]:
                 if key in trace_meta:
                     meta[key] = trace_meta[key]

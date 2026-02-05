@@ -276,6 +276,93 @@ def check_think_blocks(per_dataset: dict[str, list[Path]], sample_size: int = 10
 
 
 # =============================================================================
+# Check 3.5: Swapped-label protocol metadata
+# =============================================================================
+
+
+def check_swapped_label_metadata(per_dataset: dict[str, list[Path]], sample_size: int = 10):
+    """Check that traces have swapped-label protocol metadata if applicable."""
+    print("\n--- Check 3.5: Swapped-Label Protocol Metadata ---")
+
+    # Sample traces across all datasets
+    all_files = []
+    for files in per_dataset.values():
+        all_files.extend(files)
+
+    if len(all_files) < sample_size:
+        sample = all_files
+    else:
+        sample = random.sample(all_files, sample_size)
+
+    has_swapped = 0
+    has_yesno = 0
+    missing_fields = 0
+
+    for fp in sample:
+        with open(fp, "r") as f:
+            data = json.load(f)
+        meta = data.get("metadata", {})
+
+        prompt_config = meta.get("prompt_config")
+        label_mapping = meta.get("label_mapping")
+        valid_token = meta.get("valid_token")
+        invalid_token = meta.get("invalid_token")
+
+        if prompt_config in ("A", "B"):
+            has_swapped += 1
+            # Verify swapped-label fields are present
+            if not label_mapping or not valid_token or not invalid_token:
+                missing_fields += 1
+            # Verify tokens are Rho/Tau
+            if valid_token not in ("Rho", "Tau") or invalid_token not in ("Rho", "Tau"):
+                record(
+                    "swapped_label",
+                    f"token_values_{fp.name}",
+                    False,
+                    f"valid={valid_token}, invalid={invalid_token}",
+                )
+        elif prompt_config is None:
+            has_yesno += 1
+        else:
+            record(
+                "swapped_label",
+                f"prompt_config_{fp.name}",
+                False,
+                f"unexpected prompt_config: {prompt_config}",
+            )
+
+    print(f"  Sampled {len(sample)} traces: swapped={has_swapped}, yesno={has_yesno}")
+
+    if has_swapped > 0:
+        record(
+            "swapped_label",
+            "swapped_protocol_used",
+            True,
+            f"{has_swapped}/{len(sample)} traces use swapped-label protocol",
+        )
+        record(
+            "swapped_label",
+            "swapped_fields_complete",
+            missing_fields == 0,
+            f"{missing_fields}/{has_swapped} traces missing required fields",
+        )
+    elif has_yesno > 0:
+        record(
+            "swapped_label",
+            "yesno_protocol_used",
+            True,
+            f"{has_yesno}/{len(sample)} traces use yesno protocol (legacy)",
+        )
+    else:
+        record(
+            "swapped_label",
+            "protocol_detected",
+            False,
+            "no valid label protocol detected",
+        )
+
+
+# =============================================================================
 # Check 4: GSM-Symbolic contamination coverage
 # =============================================================================
 
@@ -780,6 +867,9 @@ def main():
 
     # Check 3: Think block integrity
     check_think_blocks(per_dataset)
+
+    # Check 3.5: Swapped-label protocol metadata
+    check_swapped_label_metadata(per_dataset)
 
     # Check 4: GSM-Symbolic contamination coverage
     check_contamination_coverage(per_dataset)

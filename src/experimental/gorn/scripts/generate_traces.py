@@ -35,6 +35,7 @@ from lib.datasets import (
 )
 from lib.model import generate_trace, load_model
 from lib.multiprocess import run_parallel_isolated
+from lib.prompts import build_verification_prompt
 from lib.storage import (
     derive_trace_seed,
     get_failed_trace_json_path,
@@ -160,6 +161,15 @@ def generation_worker(rank, gpu_id, problems, cfg):
                 if "is_fresh" in problem:
                     trace_data["metadata"]["is_fresh"] = problem["is_fresh"]
 
+                # Include swapped-label protocol metadata if present.
+                if "prompt_config" in problem:
+                    trace_data["metadata"]["prompt_config"] = problem["prompt_config"]
+                if "label_mapping" in problem:
+                    trace_data["metadata"]["label_mapping"] = problem["label_mapping"]
+                    # Store explicit valid/invalid token mapping for downstream clarity.
+                    trace_data["metadata"]["valid_token"] = problem["label_mapping"]["valid"]
+                    trace_data["metadata"]["invalid_token"] = problem["label_mapping"]["invalid"]
+
                 # Route to valid/ or failed/ based on think block presence.
                 if has_think:
                     dest_path = valid_path
@@ -241,7 +251,38 @@ def main():
     main_logger.info("StrategyQA: %d problems loaded", len(strategyqa_problems))
 
     all_problems = gsm_problems + folio_problems + strategyqa_problems
-    main_logger.info("Total problems: %d", len(all_problems))
+    main_logger.info("Total base problems: %d", len(all_problems))
+
+    # Apply swapped-label protocol: expand each problem into config A and B variants.
+    label_protocol = cfg.data.get("label_protocol", "swapped")
+    main_logger.info("Label protocol: %s", label_protocol)
+
+    expanded_problems = []
+    for problem in all_problems:
+        if label_protocol == "swapped":
+            for config_name in ["A", "B"]:
+                result = build_verification_prompt(problem, "swapped", config_name)
+                variant = dict(problem)
+                variant["verification_prompt"] = result["verification_prompt"]
+                variant["prompt_config"] = result["prompt_config"]
+                variant["label_mapping"] = result["label_mapping"]
+                variant["problem_id"] = f"{problem['problem_id']}_cfg{config_name.lower()}"
+                expanded_problems.append(variant)
+        else:
+            # yesno protocol: single variant per problem
+            result = build_verification_prompt(problem, "yesno")
+            variant = dict(problem)
+            variant["verification_prompt"] = result["verification_prompt"]
+            variant["prompt_config"] = result["prompt_config"]
+            variant["label_mapping"] = result["label_mapping"]
+            expanded_problems.append(variant)
+
+    all_problems = expanded_problems
+    main_logger.info(
+        "After %s expansion: %d problems",
+        label_protocol,
+        len(all_problems),
+    )
 
     # Count per-dataset for logging.
     dataset_counts = {}

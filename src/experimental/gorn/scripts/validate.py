@@ -29,6 +29,7 @@ sys.path.insert(0, "src/experimental/gorn")
 
 from lib.config import load_config
 from lib.datasets import load_dataset_by_name
+from lib.prompts import build_verification_prompt
 from lib.model import (
     HIDDEN_DIM,
     NUM_LAYERS,
@@ -93,6 +94,10 @@ def validate_datasets(cfg):
     for ds_name in datasets_cfg:
         print(f"\nDataset: {ds_name} (n={n})")
         problems = load_dataset_by_name(ds_name, n=n, seed=cfg.seed)
+        # Add verification_prompt using yesno protocol for backward compatibility.
+        for p in problems:
+            result = build_verification_prompt(p, label_protocol="yesno")
+            p["verification_prompt"] = result["verification_prompt"]
         all_problems[ds_name] = problems
 
         # Count labels
@@ -231,7 +236,7 @@ def validate_model_and_traces(cfg, all_problems, tmp_dir):
                 record(ds_name, f"pre_handoff_{pid}", True, f"{pre_handoff}")
             elif num_blocks >= 1:
                 # Truncated trace with think block but no closing </think>
-                print(f"    [WARN] Pre-handoff None (truncated, no </think>) - OK for validation")
+                print("    [WARN] Pre-handoff None (truncated, no </think>) - OK for validation")
                 record(ds_name, f"pre_handoff_{pid}", True, "truncated")
             else:
                 record(ds_name, f"pre_handoff_{pid}", False, "None")

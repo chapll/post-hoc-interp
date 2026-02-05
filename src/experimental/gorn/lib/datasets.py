@@ -1,16 +1,20 @@
 """Dataset loaders for binary verification format.
 
 Loads GSM-Symbolic, FOLIO, and StrategyQA from HuggingFace, converts each
-problem into a verification prompt with balanced Yes/No ground truth labels.
+problem into base problem dicts with balanced Yes/No ground truth labels.
+
+Prompts are NOT built here. Use lib.prompts.build_verification_prompt() to
+construct prompts with configurable label tokens (Rho/Tau for swapped-label
+protocol, or Yes/No for backward compatibility).
 
 Each loader returns a list of dicts with a uniform schema:
     problem_id: str           -- unique ID: "{dataset}_{index}"
     question: str             -- original question text
-    ground_truth: str         -- "Yes" or "No" (probe label, matches prompt framing)
+    ground_truth: str         -- "Yes" or "No" (abstract validity label)
     dataset_name: str         -- "gsm_symbolic", "folio", "strategyqa"
     original_answer: str      -- original answer from dataset
-    verification_prompt: str  -- full prompt for model input
     presented_answer: str     -- what was presented for verification
+    premises: str             -- (FOLIO only) formatted premises string
 """
 
 import logging
@@ -103,7 +107,6 @@ def load_gsm_symbolic(n: int = 300, seed: int = 137) -> list[dict]:
         distractor_str = str(distractor)
 
         # Yes item: correct answer presented
-        yes_prompt = f"{question}\n\nIs the answer {correct_str} (Yes or No)? Please think step-by-step to verify whether the answer is correct."
         items.append(
             {
                 "problem_id": f"gsm_symbolic_{idx}_true",
@@ -111,13 +114,11 @@ def load_gsm_symbolic(n: int = 300, seed: int = 137) -> list[dict]:
                 "ground_truth": "Yes",
                 "dataset_name": "gsm_symbolic",
                 "original_answer": correct_str,
-                "verification_prompt": yes_prompt,
                 "presented_answer": correct_str,
             }
         )
 
         # No item: distractor presented
-        no_prompt = f"{question}\n\nIs the answer {distractor_str} (Yes or No)? Please think step-by-step to verify whether the answer is correct."
         items.append(
             {
                 "problem_id": f"gsm_symbolic_{idx}_false",
@@ -125,7 +126,6 @@ def load_gsm_symbolic(n: int = 300, seed: int = 137) -> list[dict]:
                 "ground_truth": "No",
                 "dataset_name": "gsm_symbolic",
                 "original_answer": correct_str,
-                "verification_prompt": no_prompt,
                 "presented_answer": distractor_str,
             }
         )
@@ -217,13 +217,6 @@ def load_folio(n: int = 300, seed: int = 137) -> list[dict]:
             # Should not happen after filtering, but be safe
             continue
 
-        prompt = (
-            f"Given the following premises:\n"
-            f"{premises}\n\n"
-            f'Is the following conclusion valid: "{conclusion}" (Yes or No)?\n'
-            f"Please think step-by-step to verify whether this conclusion follows from the premises."
-        )
-
         items.append(
             {
                 "problem_id": f"folio_{idx}",
@@ -231,8 +224,8 @@ def load_folio(n: int = 300, seed: int = 137) -> list[dict]:
                 "ground_truth": ground_truth,
                 "dataset_name": "folio",
                 "original_answer": label,
-                "verification_prompt": prompt,
                 "presented_answer": conclusion,
+                "premises": premises,
             }
         )
 
@@ -272,8 +265,6 @@ def load_strategyqa(n: int = 300, seed: int = 137) -> list[dict]:
         ground_truth = "Yes" if answer else "No"
         presented = "yes" if answer else "no"
 
-        prompt = f"Answer the following question (Yes or No): {question}\nPlease think step-by-step to verify your answer."
-
         items.append(
             {
                 "problem_id": f"strategyqa_{idx}",
@@ -281,7 +272,6 @@ def load_strategyqa(n: int = 300, seed: int = 137) -> list[dict]:
                 "ground_truth": ground_truth,
                 "dataset_name": "strategyqa",
                 "original_answer": str(answer),
-                "verification_prompt": prompt,
                 "presented_answer": presented,
             }
         )
@@ -363,10 +353,6 @@ def load_gsm_symbolic_contamination(
         fresh_pid = f"gsm_symbolic_{template_id}_fresh"
 
         # Yes item: correct answer presented
-        fresh_yes_prompt = (
-            f"{fresh_question}\n\nIs the answer {fresh_correct_str} (Yes or No)? "
-            f"Please think step-by-step to verify whether the answer is correct."
-        )
         fresh_items.append(
             {
                 "problem_id": f"{fresh_pid}_true",
@@ -374,17 +360,12 @@ def load_gsm_symbolic_contamination(
                 "ground_truth": "Yes",
                 "dataset_name": "gsm_symbolic",
                 "original_answer": fresh_correct_str,
-                "verification_prompt": fresh_yes_prompt,
                 "presented_answer": fresh_correct_str,
                 "is_fresh": True,
             }
         )
 
         # No item: distractor presented
-        fresh_no_prompt = (
-            f"{fresh_question}\n\nIs the answer {fresh_distractor_str} (Yes or No)? "
-            f"Please think step-by-step to verify whether the answer is correct."
-        )
         fresh_items.append(
             {
                 "problem_id": f"{fresh_pid}_false",
@@ -392,7 +373,6 @@ def load_gsm_symbolic_contamination(
                 "ground_truth": "No",
                 "dataset_name": "gsm_symbolic",
                 "original_answer": fresh_correct_str,
-                "verification_prompt": fresh_no_prompt,
                 "presented_answer": fresh_distractor_str,
                 "is_fresh": True,
             }
@@ -411,10 +391,6 @@ def load_gsm_symbolic_contamination(
         orig_pid = f"gsm_symbolic_{template_id}_original"
 
         # Yes item: correct answer presented
-        orig_yes_prompt = (
-            f"{orig_question}\n\nIs the answer {orig_correct_str} (Yes or No)? "
-            f"Please think step-by-step to verify whether the answer is correct."
-        )
         original_items.append(
             {
                 "problem_id": f"{orig_pid}_true",
@@ -422,17 +398,12 @@ def load_gsm_symbolic_contamination(
                 "ground_truth": "Yes",
                 "dataset_name": "gsm_symbolic",
                 "original_answer": orig_correct_str,
-                "verification_prompt": orig_yes_prompt,
                 "presented_answer": orig_correct_str,
                 "is_fresh": False,
             }
         )
 
         # No item: distractor presented
-        orig_no_prompt = (
-            f"{orig_question}\n\nIs the answer {orig_distractor_str} (Yes or No)? "
-            f"Please think step-by-step to verify whether the answer is correct."
-        )
         original_items.append(
             {
                 "problem_id": f"{orig_pid}_false",
@@ -440,7 +411,6 @@ def load_gsm_symbolic_contamination(
                 "ground_truth": "No",
                 "dataset_name": "gsm_symbolic",
                 "original_answer": orig_correct_str,
-                "verification_prompt": orig_no_prompt,
                 "presented_answer": orig_distractor_str,
                 "is_fresh": False,
             }
