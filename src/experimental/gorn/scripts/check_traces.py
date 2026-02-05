@@ -210,6 +210,7 @@ def scan_traces(traces_dir: str) -> None:
         "hit_max_tokens",
         "degenerate_repetition",
         "length_outlier",
+        "multi_block",
         "pass_all",
         "file_path",
     ]
