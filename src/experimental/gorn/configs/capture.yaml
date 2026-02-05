@@ -1,0 +1,14 @@
+# Capture-specific overrides for capture_activations.py
+# Merges on top of base.yaml via load_config("configs/capture.yaml")
+
+capture:
+  num_layers: 36
+  chunk_size: 12
+  top_k_logits: 50
+  verify_logits: true
+  logits_rtol: 0.01
+  logits_atol: 0.01
+
+paths:
+  traces_dir: "src/experimental/gorn/data/traces"
+  activations_dir: "src/experimental/gorn/data/activations"

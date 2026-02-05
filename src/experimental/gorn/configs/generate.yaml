@@ -1,0 +1,17 @@
+# Generation-specific overrides for generate_traces.py
+# Merges on top of base.yaml via load_config("configs/generate.yaml")
+
+model:
+  max_new_tokens: 4096
+
+data:
+  traces_per_problem: 5
+  # GSM-Symbolic: 100 fresh + 100 original = 200 problems
+  # FOLIO: 100 problems (50 Yes + 50 No)
+  # StrategyQA: 100 problems (50 Yes + 50 No)
+  gsm_problems_per_type: 100
+  folio_problems: 100
+  strategyqa_problems: 100
+
+paths:
+  traces_dir: "src/experimental/gorn/data/traces"

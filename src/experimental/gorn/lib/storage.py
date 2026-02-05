@@ -3,11 +3,16 @@
 Handles BF16 activations, top-k logit values/indices, per-position entropy,
 and token IDs with companion JSON metadata files. All tensor dtypes are
 enforced on save to ensure consistent storage format.
+
+Also provides path helpers for the decoupled trace/activation directory layout:
+- Traces (JSON): data/traces/{valid,failed}/{dataset}/{problem_id}/trace_NN.json
+- Activations (safetensors): data/activations/{dataset}/{problem_id}/trace_NN.safetensors
 """
 
+import hashlib
 import json
 import os
-from pathlib import Path
+import tempfile
 
 import torch
 from safetensors.torch import load_file, save_file
@@ -207,3 +212,139 @@ def get_metadata_path(trace_path: str) -> str:
     """
     base, _ = os.path.splitext(trace_path)
     return base + ".json"
+
+
+# ---------------------------------------------------------------------------
+# Decoupled trace/activation directory layout helpers
+# ---------------------------------------------------------------------------
+
+
+def get_trace_json_path(
+    traces_dir: str, dataset_name: str, problem_id: str, trace_idx: int
+) -> str:
+    """Return path for a valid trace JSON file in the decoupled layout.
+
+    Format: {traces_dir}/valid/{dataset_name}/{problem_id}/trace_{trace_idx:02d}.json
+
+    Args:
+        traces_dir: Root directory for trace storage.
+        dataset_name: Name of the dataset (e.g., gsm_symbolic).
+        problem_id: Unique problem identifier.
+        trace_idx: Integer index of the trace (0-padded to 2 digits).
+
+    Returns:
+        Full path string to the trace JSON file.
+    """
+    return os.path.join(
+        traces_dir,
+        "valid",
+        dataset_name,
+        problem_id,
+        f"trace_{trace_idx:02d}.json",
+    )
+
+
+def get_failed_trace_json_path(
+    traces_dir: str, dataset_name: str, problem_id: str, trace_idx: int
+) -> str:
+    """Return path for a failed/quarantined trace JSON file.
+
+    Format: {traces_dir}/failed/{dataset_name}/{problem_id}/trace_{trace_idx:02d}.json
+
+    Args:
+        traces_dir: Root directory for trace storage.
+        dataset_name: Name of the dataset (e.g., gsm_symbolic).
+        problem_id: Unique problem identifier.
+        trace_idx: Integer index of the trace (0-padded to 2 digits).
+
+    Returns:
+        Full path string to the failed trace JSON file.
+    """
+    return os.path.join(
+        traces_dir,
+        "failed",
+        dataset_name,
+        problem_id,
+        f"trace_{trace_idx:02d}.json",
+    )
+
+
+def get_activation_path(
+    activations_dir: str, dataset_name: str, problem_id: str, trace_idx: int
+) -> str:
+    """Return path for an activation safetensors file in the decoupled layout.
+
+    Format: {activations_dir}/{dataset_name}/{problem_id}/trace_{trace_idx:02d}.safetensors
+
+    Args:
+        activations_dir: Root directory for activation storage.
+        dataset_name: Name of the dataset (e.g., gsm_symbolic).
+        problem_id: Unique problem identifier.
+        trace_idx: Integer index of the trace (0-padded to 2 digits).
+
+    Returns:
+        Full path string to the activation safetensors file.
+    """
+    return os.path.join(
+        activations_dir,
+        dataset_name,
+        problem_id,
+        f"trace_{trace_idx:02d}.safetensors",
+    )
+
+
+def write_trace_json(data: dict, path: str) -> None:
+    """Write trace data to a JSON file atomically.
+
+    Uses tempfile.mkstemp to create a temporary file in the same directory
+    as the target, writes the JSON data, then performs a POSIX atomic
+    os.rename(). If any error occurs, the temporary file is cleaned up
+    before re-raising.
+
+    Args:
+        data: Dict of trace data to serialize as JSON.
+        path: Target output file path.
+
+    Raises:
+        TypeError: If data contains non-JSON-serializable values.
+        OSError: If file operations fail.
+    """
+    dir_name = os.path.dirname(os.path.abspath(path))
+    os.makedirs(dir_name, exist_ok=True)
+
+    fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, indent=2)
+        os.rename(tmp_path, path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def derive_trace_seed(problem_id: str, trace_index: int) -> int:
+    """Derive a deterministic seed from problem_id and trace_index.
+
+    Uses MD5 hash for deterministic mixing (not security -- just
+    reproducible seed derivation). The result is stateless and
+    order-independent: any problem can be generated on any worker
+    in any order without global state.
+
+    Per project rules, seed 42 is never returned (returns 43 instead).
+
+    Args:
+        problem_id: Unique problem identifier string.
+        trace_index: Integer trace index for this problem.
+
+    Returns:
+        Integer seed in range [0, 2^32), never 42.
+    """
+    key = f"{problem_id}_{trace_index}"
+    hash_hex = hashlib.md5(key.encode()).hexdigest()
+    seed = int(hash_hex, 16) % (2**32)
+    if seed == 42:
+        seed = 43
+    return seed
