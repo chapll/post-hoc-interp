@@ -289,11 +289,224 @@ def load_strategyqa(n: int = 300, seed: int = 137) -> list[dict]:
     return _balance_and_sample(items, n, rng, "strategyqa")
 
 
+def load_gsm_symbolic_contamination(
+    n_per_type: int = 100,
+    seed: int = 137,
+    fresh_instance_id: int = 0,
+) -> list[dict]:
+    """Load GSM-Symbolic with both original and fresh instances for contamination analysis.
+
+    For each of the 100 GSM-Symbolic templates, creates two problems:
+    - A "fresh" problem using a generated variant (instance fresh_instance_id),
+      which has different numerical values from the GSM8K training data.
+    - An "original" problem using the original_question and original_answer fields,
+      which contain the exact GSM8K text the model may have been trained on.
+
+    Each problem is converted to binary verification format (Yes item with correct
+    answer, No item with distractor), then balanced and sampled separately for
+    fresh and original items.
+
+    Args:
+        n_per_type: Target number of problems per type (fresh/original).
+            Each type will have n_per_type/2 Yes + n_per_type/2 No items.
+        seed: Random seed for reproducibility.
+        fresh_instance_id: Which generated instance to use as the "fresh" variant
+            (0-49 available per template).
+
+    Returns:
+        Combined list of problem dicts with all standard fields plus:
+        - is_fresh: bool indicating whether this is a fresh (True) or
+          original/potentially-contaminated (False) instance.
+    """
+    rng = random.Random(seed)
+    ds = load_dataset("apple/GSM-Symbolic", "main", split="test")
+    logger.info("GSM-Symbolic contamination: loaded %d rows", len(ds))
+
+    # Group rows by template id
+    templates: dict[int, list] = {}
+    for row in ds:
+        templates.setdefault(row["id"], []).append(row)
+
+    logger.info(
+        "GSM-Symbolic contamination: %d templates, %d instances per template (avg)",
+        len(templates),
+        len(ds) // max(len(templates), 1),
+    )
+
+    fresh_items = []
+    original_items = []
+
+    for template_id in sorted(templates.keys()):
+        rows = templates[template_id]
+
+        # Find the fresh instance row
+        fresh_rows = [r for r in rows if r["instance"] == fresh_instance_id]
+        if not fresh_rows:
+            logger.warning(
+                "GSM-Symbolic contamination: template %d has no instance %d, skipping",
+                template_id,
+                fresh_instance_id,
+            )
+            continue
+        fresh_row = fresh_rows[0]
+
+        # --- Fresh problem (generated variant with different numbers) ---
+        fresh_answer_text = fresh_row["answer"]
+        fresh_parsed = _parse_gsm_answer(fresh_answer_text, f"fresh template {template_id}")
+        if fresh_parsed is None:
+            continue
+
+        fresh_correct_str = str(fresh_parsed)
+        fresh_distractor = _generate_distractor(fresh_parsed, rng)
+        fresh_distractor_str = str(fresh_distractor)
+        fresh_question = fresh_row["question"]
+        fresh_pid = f"gsm_symbolic_{template_id}_fresh"
+
+        # Yes item: correct answer presented
+        fresh_yes_prompt = (
+            f"{fresh_question}\n\nIs the answer {fresh_correct_str} (Yes or No)? "
+            f"Please think step-by-step to verify whether the answer is correct."
+        )
+        fresh_items.append(
+            {
+                "problem_id": f"{fresh_pid}_true",
+                "question": fresh_question,
+                "ground_truth": "Yes",
+                "dataset_name": "gsm_symbolic",
+                "original_answer": fresh_correct_str,
+                "verification_prompt": fresh_yes_prompt,
+                "presented_answer": fresh_correct_str,
+                "is_fresh": True,
+            }
+        )
+
+        # No item: distractor presented
+        fresh_no_prompt = (
+            f"{fresh_question}\n\nIs the answer {fresh_distractor_str} (Yes or No)? "
+            f"Please think step-by-step to verify whether the answer is correct."
+        )
+        fresh_items.append(
+            {
+                "problem_id": f"{fresh_pid}_false",
+                "question": fresh_question,
+                "ground_truth": "No",
+                "dataset_name": "gsm_symbolic",
+                "original_answer": fresh_correct_str,
+                "verification_prompt": fresh_no_prompt,
+                "presented_answer": fresh_distractor_str,
+                "is_fresh": True,
+            }
+        )
+
+        # --- Original problem (GSM8K text, potentially contaminated) ---
+        orig_question = fresh_row["original_question"]
+        orig_answer_text = fresh_row["original_answer"]
+        orig_parsed = _parse_gsm_answer(orig_answer_text, f"original template {template_id}")
+        if orig_parsed is None:
+            continue
+
+        orig_correct_str = str(orig_parsed)
+        orig_distractor = _generate_distractor(orig_parsed, rng)
+        orig_distractor_str = str(orig_distractor)
+        orig_pid = f"gsm_symbolic_{template_id}_original"
+
+        # Yes item: correct answer presented
+        orig_yes_prompt = (
+            f"{orig_question}\n\nIs the answer {orig_correct_str} (Yes or No)? "
+            f"Please think step-by-step to verify whether the answer is correct."
+        )
+        original_items.append(
+            {
+                "problem_id": f"{orig_pid}_true",
+                "question": orig_question,
+                "ground_truth": "Yes",
+                "dataset_name": "gsm_symbolic",
+                "original_answer": orig_correct_str,
+                "verification_prompt": orig_yes_prompt,
+                "presented_answer": orig_correct_str,
+                "is_fresh": False,
+            }
+        )
+
+        # No item: distractor presented
+        orig_no_prompt = (
+            f"{orig_question}\n\nIs the answer {orig_distractor_str} (Yes or No)? "
+            f"Please think step-by-step to verify whether the answer is correct."
+        )
+        original_items.append(
+            {
+                "problem_id": f"{orig_pid}_false",
+                "question": orig_question,
+                "ground_truth": "No",
+                "dataset_name": "gsm_symbolic",
+                "original_answer": orig_correct_str,
+                "verification_prompt": orig_no_prompt,
+                "presented_answer": orig_distractor_str,
+                "is_fresh": False,
+            }
+        )
+
+    logger.info(
+        "GSM-Symbolic contamination: %d fresh items, %d original items (before balancing)",
+        len(fresh_items),
+        len(original_items),
+    )
+
+    # Balance and sample separately for fresh and original
+    balanced_fresh = _balance_and_sample(fresh_items, n_per_type, rng, "gsm_symbolic_fresh")
+    balanced_original = _balance_and_sample(
+        original_items, n_per_type, rng, "gsm_symbolic_original"
+    )
+
+    combined = balanced_fresh + balanced_original
+    rng.shuffle(combined)
+
+    logger.info(
+        "GSM-Symbolic contamination: returning %d items (%d fresh + %d original)",
+        len(combined),
+        len(balanced_fresh),
+        len(balanced_original),
+    )
+
+    return combined
+
+
+def _parse_gsm_answer(answer_text: str, context: str) -> int | float | None:
+    """Parse the numerical answer from GSM-style '#### <number>' format.
+
+    Args:
+        answer_text: Full answer text containing #### separator.
+        context: Description of the source for warning messages.
+
+    Returns:
+        Parsed int or float value, or None if parsing fails.
+    """
+    parts = answer_text.split("####")
+    if len(parts) < 2:
+        logger.warning("GSM-Symbolic %s: no #### separator in answer, skipping", context)
+        return None
+
+    raw_answer = parts[-1].strip()
+
+    try:
+        return int(raw_answer)
+    except ValueError:
+        try:
+            return float(raw_answer)
+        except ValueError:
+            logger.warning(
+                "GSM-Symbolic %s: cannot parse answer '%s', skipping",
+                context,
+                raw_answer,
+            )
+            return None
+
+
 def load_dataset_by_name(name: str, n: int = 300, seed: int = 137) -> list[dict]:
     """Dispatch to the appropriate dataset loader by name.
 
     Args:
-        name: One of "gsm_symbolic", "folio", "strategyqa".
+        name: One of "gsm_symbolic", "gsm_symbolic_contamination", "folio", "strategyqa".
         n: Target number of problems.
         seed: Random seed for reproducibility.
 
@@ -303,6 +516,9 @@ def load_dataset_by_name(name: str, n: int = 300, seed: int = 137) -> list[dict]
     Raises:
         ValueError: If name is not a recognized dataset.
     """
+    if name == "gsm_symbolic_contamination":
+        return load_gsm_symbolic_contamination(n_per_type=n, seed=seed)
+
     loaders = {
         "gsm_symbolic": load_gsm_symbolic,
         "folio": load_folio,
@@ -310,6 +526,9 @@ def load_dataset_by_name(name: str, n: int = 300, seed: int = 137) -> list[dict]
     }
 
     if name not in loaders:
-        raise ValueError(f"Unknown dataset: '{name}'. Available: {sorted(loaders.keys())}")
+        raise ValueError(
+            f"Unknown dataset: '{name}'. "
+            f"Available: {sorted(list(loaders.keys()) + ['gsm_symbolic_contamination'])}"
+        )
 
     return loaders[name](n=n, seed=seed)
