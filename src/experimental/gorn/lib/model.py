@@ -186,22 +186,31 @@ def capture_activations(
     )
 
     # Collect saved proxy references during the trace context.
+    # Strategy: Access layers in sequential order (0, 1, 2, ...) to avoid nnsight OutOfOrderError.
+    # For layers in layer_subset, save full residual (and derive last token post-trace).
+    # For layers NOT in layer_subset, save only last-token to avoid memory overhead.
     saved_residuals = {}
-    saved_last_tokens = {}
+    saved_last_tokens_only = {}
     saved_logits = None
+
+    layer_subset_set = set(layer_subset)
 
     start_time = time.time()
 
     with model.trace(input_ids) as tracer:
-        # Full-sequence residual stream at selected layers.
-        for idx in layer_subset:
-            saved_residuals[idx] = model.model.layers[idx].output[0].save()
-
-        # Last-token activations at every layer.
+        # Access all layers in sequential order to satisfy nnsight's ordering requirement.
+        # NOTE: In nnsight for Qwen3, .output returns [batch, seq_len, hidden].
+        # Using .output[0] would index the batch dimension, giving [seq_len, hidden].
+        # We want the full 3D tensor, so we use .output directly.
         for idx in range(num_layers):
-            saved_last_tokens[idx] = (
-                model.model.layers[idx].output[0][:, -1, :].save()
-            )
+            if idx in layer_subset_set:
+                # Full residual for this layer (will extract last token post-trace).
+                saved_residuals[idx] = model.model.layers[idx].output.save()
+            else:
+                # Only last-token for layers not in subset.
+                saved_last_tokens_only[idx] = (
+                    model.model.layers[idx].output[:, -1, :].save()
+                )
 
         # Full logits for top-k and entropy computation.
         saved_logits = model.lm_head.output.save()
@@ -218,9 +227,14 @@ def capture_activations(
         results[key] = tensor
         logger.debug("  %s: %s dtype=%s", key, tensor.shape, tensor.dtype)
 
+    # Build last-token results: derive from full residual for layer_subset, use direct for others.
     for idx in range(num_layers):
         key = f"last_token_layer_{idx}"
-        tensor = saved_last_tokens[idx].detach().cpu().to(torch.bfloat16)
+        if idx in layer_subset_set:
+            # Extract last token from full residual.
+            tensor = saved_residuals[idx][:, -1, :].detach().cpu().to(torch.bfloat16)
+        else:
+            tensor = saved_last_tokens_only[idx].detach().cpu().to(torch.bfloat16)
         results[key] = tensor
         logger.debug("  %s: %s dtype=%s", key, tensor.shape, tensor.dtype)
 

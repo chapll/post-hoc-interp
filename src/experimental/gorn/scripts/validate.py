@@ -638,7 +638,7 @@ def main():
     print(f"CUDA devices visible: {num_visible}")
     for i in range(num_visible):
         name = torch.cuda.get_device_name(i)
-        mem_gb = torch.cuda.get_device_properties(i).total_mem / (1024**3)
+        mem_gb = torch.cuda.get_device_properties(i).total_memory / (1024**3)
         print(f"  GPU {i}: {name} ({mem_gb:.1f} GB)")
 
     # Validate GPU IDs in config
