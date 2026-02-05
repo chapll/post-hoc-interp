@@ -9,7 +9,9 @@ data:
   problems_per_dataset: 6
 
 model:
-  max_new_tokens: 4096
+  # Use shorter generation for validation to avoid OOM during activation capture.
+  # Full-length traces (4096+) require chunked capture or reduced layer subset.
+  max_new_tokens: 512
 
 storage:
   layer_subset: [0, 4, 8, 12, 16, 20, 24, 28, 32, 35]
