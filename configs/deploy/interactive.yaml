@@ -1,8 +1,0 @@
-# @package _global_
-# Interactive mode for local development / single-node training
-
-hydra:
-  mode: RUN
-  run:
-    dir: ${deploy_paths.run_dir}
-  output_subdir: hydra

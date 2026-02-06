@@ -1,5 +1,0 @@
-init_state_dir: null
-interval: 0
-resume: false
-resume_step: -1
-timeout_minutes: 0

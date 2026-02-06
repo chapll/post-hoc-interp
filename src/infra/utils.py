@@ -1,58 +1,83 @@
-# Adapted from https://github.com/test-time-training/ttt-video-dit/blob/main/ttt/infra/utils.py
-# Copyright 2025 test-time-training. All rights reserved.
-# Licensed under the MIT License
+"""Utility functions for experimental pipeline: seeding, device, logging."""
 
-import datetime
-import gc
+import logging
 import random
-import time
+import sys
 
 import numpy as np
 import torch
 
 
-def set_random_seed(seed: int):
+def set_seed(seed: int) -> None:
+    """Set deterministic random seeds across all relevant libraries.
+
+    Args:
+        seed: Integer seed value. Must not be 42.
+
+    Raises:
+        ValueError: If seed is 42.
+    """
+    if seed == 42:
+        raise ValueError("Seed 42 is not allowed. Use any other seed value.")
+
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.benchmark = True
+    torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.enabled = True  # Can set to False if needed
-    torch.backends.cuda.matmul.allow_tf32 = False  # Faster but less accurate if set to True
+    torch.backends.cudnn.benchmark = False
 
 
-class TimedContext:
-    def __enter__(self):
-        self.start_time = time.perf_counter()
-        return self
-    
-    def __exit__(self, exc_type, exc_value, traceback):
-        self.end_time = time.perf_counter()
-        self.duration = self.end_time - self.start_time
+def get_device(gpu_id: int) -> torch.device:
+    """Return a CUDA device for the given GPU ID.
+
+    Args:
+        gpu_id: Integer GPU index.
+
+    Returns:
+        torch.device for the specified CUDA GPU.
+
+    Raises:
+        RuntimeError: If CUDA is not available. No silent CPU fallback.
+    """
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "CUDA is not available. This pipeline requires GPU. "
+            "No CPU fallback is provided."
+        )
+    if gpu_id >= torch.cuda.device_count():
+        raise RuntimeError(
+            f"Requested GPU {gpu_id} but only {torch.cuda.device_count()} "
+            f"GPU(s) are available."
+        )
+    return torch.device(f"cuda:{gpu_id}")
 
 
-def get_time():
-    if not hasattr(get_time, "cached_time"):
-        get_time.cached_time = datetime.datetime.now()  # type: ignore
-    return get_time.cached_time  # type: ignore
+def setup_logging(name: str, level: str = "INFO") -> logging.Logger:
+    """Create a plain text logger with the given name.
 
+    Format: [LEVEL] name: message
+    Output goes to stdout. No emoji, no decorative formatting.
 
-def get_num_params(model: torch.nn.Module, exclude_embedding: bool = False) -> int:
-    num_params = sum(p.numel() for p in model.parameters())
-    if exclude_embedding:
-        num_params -= model.tok_embeddings.weight.numel()  # type: ignore
-    return num_params
+    Args:
+        name: Logger name.
+        level: Logging level string (DEBUG, INFO, WARNING, ERROR, CRITICAL).
 
+    Returns:
+        Configured logging.Logger instance.
+    """
+    logger = logging.getLogger(name)
+    logger.setLevel(getattr(logging, level.upper()))
 
-# used to avoid stragglers in garbage collection
-class GarbageCollection:
-    def __init__(self, gc_freq: int = 1000):
-        assert gc_freq > 0, "gc_freq must be a positive integer"
-        self.gc_freq = gc_freq
-        gc.disable()
-        gc.collect(1)
+    # Avoid adding duplicate handlers if called multiple times
+    if not logger.handlers:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setLevel(getattr(logging, level.upper()))
+        formatter = logging.Formatter("[%(levelname)s] %(name)s: %(message)s")
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
 
-    def run(self, step_count: int):
-        if step_count > 1 and step_count % self.gc_freq == 0:
-            gc.collect(1)
+    # Prevent propagation to root logger to avoid duplicate output
+    logger.propagate = False
+
+    return logger
