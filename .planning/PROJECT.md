@@ -123,4 +123,4 @@ With both configs in training data, Rho/Tau have zero correlation with the valid
 | Swapped Rho/Tau labels over Yes/No | Eliminates probe confound from detecting surface token mentions during reasoning; forces probe to find abstract validity signal | Implemented |
 
 ---
-*Last updated: 2026-02-04 after probing methodology correction (Train-on-End/Test-on-Middle, multi-block handling, special token protocol)*
+*Last updated: 2026-02-05 after swapped-label protocol implementation (Rho/Tau tokens, A/B configs, prompts.py)*
