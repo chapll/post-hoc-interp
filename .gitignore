@@ -221,4 +221,4 @@ configs/deploy/submitit_*.yaml
 exp/
 
 # Planning docs (local only)
-.planning/
+# .planning/
