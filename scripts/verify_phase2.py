@@ -14,8 +14,8 @@ Checks all Phase 2 outputs for completeness, correctness, and consistency:
 Does not require GPU access. Reads only from disk.
 
 Usage:
-    uv run python src/experimental/gorn/scripts/verify_phase2.py \
-        --config src/experimental/gorn/configs/capture.yaml
+    uv run python scripts/verify_phase2.py \
+        --config configs/capture.yaml
 """
 
 import csv
@@ -28,9 +28,9 @@ from pathlib import Path
 
 from safetensors.torch import load_file
 
-from src.experimental.gorn.lib.config import load_config
-from src.experimental.gorn.lib.storage import derive_trace_seed
-from src.experimental.gorn.lib.tokens import parse_think_boundaries
+from src.infra.config import load_config
+from src.infra.storage import derive_trace_seed
+from src.infra.tokens import parse_think_boundaries
 
 # -- globals ------------------------------------------------------------------
 

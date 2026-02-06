@@ -10,8 +10,8 @@ only a subset of layers. nnsight 0.5 requires sequential layer access, so
 each pass iterates ALL layers but only .save()-s the ones in the current chunk.
 
 Usage:
-    uv run python src/experimental/gorn/scripts/capture_activations.py \
-        --config src/experimental/gorn/configs/capture.yaml --gpus 0,1,2,3
+    uv run python scripts/capture_activations.py \
+        --config configs/capture.yaml --gpus 0,1,2,3
 """
 
 import gc
@@ -19,19 +19,16 @@ import json
 import logging
 import math
 import os
-import sys
 import time
 
 import torch
 
 # -- project imports ----------------------------------------------------------
-sys.path.insert(0, "src/experimental/gorn")
-
-from lib.config import load_config
-from lib.model import NUM_LAYERS, load_model
-from lib.multiprocess import run_parallel_isolated
-from lib.storage import get_activation_path, save_metadata, save_trace
-from lib.utils import setup_logging
+from src.infra.config import load_config
+from src.infra.model import NUM_LAYERS, load_model
+from src.infra.multiprocess import run_parallel_isolated
+from src.infra.storage import get_activation_path, save_metadata, save_trace
+from src.infra.utils import setup_logging
 
 logger = logging.getLogger(__name__)
 

@@ -11,8 +11,17 @@ from pathlib import Path
 from omegaconf import DictConfig, OmegaConf
 
 
-# Resolve the path to configs/ relative to this file's location
-_CONFIGS_DIR = Path(__file__).resolve().parent.parent / "configs"
+def _find_project_root() -> Path:
+    """Walk up from this file to find the directory containing pyproject.toml."""
+    current = Path(__file__).resolve().parent
+    while current != current.parent:
+        if (current / "pyproject.toml").exists():
+            return current
+        current = current.parent
+    raise FileNotFoundError("Could not find project root (no pyproject.toml found)")
+
+
+_CONFIGS_DIR = _find_project_root() / "configs"
 _BASE_CONFIG = _CONFIGS_DIR / "base.yaml"
 
 

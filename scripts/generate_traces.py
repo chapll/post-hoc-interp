@@ -12,38 +12,35 @@ Uses run_parallel_isolated for fault tolerance: worker crashes do not kill
 other workers.
 
 Usage:
-    uv run python src/experimental/gorn/scripts/generate_traces.py \
-        --config src/experimental/gorn/configs/generate.yaml --gpus 0,1,2,3
+    uv run python scripts/generate_traces.py \
+        --config configs/generate.yaml --gpus 0,1,2,3
 """
 
 import gc
 import logging
 import os
-import sys
 import time
 
 import torch
 
 # -- project imports ----------------------------------------------------------
-sys.path.insert(0, "src/experimental/gorn")
-
-from lib.config import load_config
-from lib.datasets import (
+from src.infra.config import load_config
+from src.infra.datasets import (
     load_folio,
     load_gsm_symbolic_contamination,
     load_strategyqa,
 )
-from lib.model import generate_trace, load_model
-from lib.multiprocess import run_parallel_isolated
-from lib.prompts import build_verification_prompt
-from lib.storage import (
+from src.infra.model import generate_trace, load_model
+from src.infra.multiprocess import run_parallel_isolated
+from src.infra.prompts import build_verification_prompt
+from src.infra.storage import (
     derive_trace_seed,
     get_failed_trace_json_path,
     get_trace_json_path,
     write_trace_json,
 )
-from lib.tokens import parse_think_boundaries
-from lib.utils import set_seed, setup_logging
+from src.infra.tokens import parse_think_boundaries
+from src.infra.utils import set_seed, setup_logging
 
 logger = logging.getLogger(__name__)
 

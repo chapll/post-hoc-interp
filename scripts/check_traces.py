@@ -17,8 +17,8 @@ from pathlib import Path
 
 import numpy as np
 
-from src.experimental.gorn.lib.config import load_config
-from src.experimental.gorn.lib.tokens import parse_think_boundaries
+from src.infra.config import load_config
+from src.infra.tokens import parse_think_boundaries
 
 
 def find_trace_files(traces_dir: str) -> list[Path]:
@@ -270,7 +270,7 @@ def scan_traces(traces_dir: str) -> None:
     if n_fail > 0:
         print(
             "\nTo quarantine failed traces, review the report and run:"
-            "\n  python -m src.experimental.gorn.scripts.check_traces --quarantine"
+            "\n  python scripts/check_traces.py --quarantine"
         )
 
 

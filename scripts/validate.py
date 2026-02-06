@@ -14,8 +14,8 @@ Requires GPU access. Exits with code 1 on any failure or if fewer than 2 GPUs
 are available (multi-GPU validation is mandatory).
 
 Usage:
-    uv run python src/experimental/gorn/scripts/validate.py \
-        --config src/experimental/gorn/configs/validate.yaml --gpus 0,1
+    uv run python scripts/validate.py \
+        --config configs/validate.yaml --gpus 0,1
 """
 
 import gc
@@ -25,20 +25,18 @@ import tempfile
 import torch
 
 # -- project imports ----------------------------------------------------------
-sys.path.insert(0, "src/experimental/gorn")
-
-from lib.config import load_config
-from lib.datasets import load_dataset_by_name
-from lib.prompts import build_verification_prompt
-from lib.model import (
+from src.infra.config import load_config
+from src.infra.datasets import load_dataset_by_name
+from src.infra.prompts import build_verification_prompt
+from src.infra.model import (
     HIDDEN_DIM,
     NUM_LAYERS,
     capture_activations,
     generate_trace,
     load_model,
 )
-from lib.multiprocess import run_parallel
-from lib.storage import (
+from src.infra.multiprocess import run_parallel
+from src.infra.storage import (
     get_metadata_path,
     get_trace_path,
     load_metadata,
@@ -46,13 +44,13 @@ from lib.storage import (
     prepare_trace_tensors,
     save_trace,
 )
-from lib.tokens import (
+from src.infra.tokens import (
     count_think_blocks,
     get_pre_handoff_window,
     get_think_content_mask,
     parse_think_boundaries,
 )
-from lib.utils import set_seed, setup_logging
+from src.infra.utils import set_seed, setup_logging
 
 # -- globals ------------------------------------------------------------------
 
@@ -475,12 +473,12 @@ def _multi_gpu_worker(rank, gpu_id, items, cfg):
 
     Loads model on assigned GPU, generates one trace per item, saves to disk.
     """
-    from lib.model import capture_activations as _capture
-    from lib.model import generate_trace as _gen
-    from lib.model import load_model as _load
-    from lib.storage import prepare_trace_tensors as _prepare
-    from lib.storage import save_trace as _save
-    from lib.storage import get_trace_path as _trace_path
+    from src.infra.model import capture_activations as _capture
+    from src.infra.model import generate_trace as _gen
+    from src.infra.model import load_model as _load
+    from src.infra.storage import prepare_trace_tensors as _prepare
+    from src.infra.storage import save_trace as _save
+    from src.infra.storage import get_trace_path as _trace_path
 
     print(f"  [Worker {rank}] Starting on GPU {gpu_id} with {len(items)} items")
     model, tokenizer = _load(gpu_id=gpu_id)
@@ -566,7 +564,7 @@ def validate_multi_gpu(cfg, all_problems):
 
     # Verify output files exist
     import os
-    from lib.storage import get_trace_path as _tp
+    from src.infra.storage import get_trace_path as _tp
     all_exist = True
     for item in work_items:
         trace_path = _tp(multi_tmp, item["dataset_name"], item["problem_id"], 0)
