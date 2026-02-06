@@ -15,7 +15,8 @@ This roadmap delivers a mechanistic interpretability pipeline that detects perfo
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Foundation and Validation** - Model loading, datasets, config, storage, and end-to-end nnsight validation on a single problem
-- [ ] **Phase 2: Trace Generation at Scale** - Two-pass trace generation across ~400 problems with multi-GPU parallelism and contamination mitigation
+- [x] **Phase 2: Trace Generation at Scale** - Two-pass trace generation across ~400 problems with multi-GPU parallelism and contamination mitigation
+- [ ] **Phase 2.1: Repo Restructure and Shared Infra Stabilization** (INSERTED) - Promote experimental/gorn/ code to main repo structure, eliminate experimental dirs, validate all imports and pipeline stability
 - [ ] **Phase 3: Probing and Transition Detection** - Linear probes, selectivity controls, transition point identification, cosine similarity dynamics, Cox 2x2 framework
 - [ ] **Phase 4: Differential Analysis and Vector Extraction** - Performativity vector via Difference in Means, cross-dataset analysis, IPHR reversed pairs, unfaithfulness patterns
 - [ ] **Phase 5: Causal Steering Validation** - Steering with performativity vector, sham controls, entropy baseline, greedy pruning baseline, random/midpoint baselines
@@ -73,9 +74,34 @@ Plans:
 - [x] 02-05-PLAN.md -- Phase 2 verification script and end-to-end test run
 - [x] 02-06-PLAN.md -- Swapped-label prompt protocol (prompts.py, datasets.py update, generate_traces.py expansion)
 
+### Phase 2.1: Repo Restructure and Shared Infra Stabilization (INSERTED)
+**Goal**: All shared infrastructure from `src/experimental/gorn/lib/` promoted to `src/infra/`, experiment scripts moved to top-level `scripts/`, `src/experimental/` directory eliminated. All imports updated, full pipeline validated end-to-end, and other researchers (Eric, etc.) can import and use shared modules from the new locations. Tests written for shared infra modules.
+**Depends on**: Phase 2
+**Requirements**: None (structural improvement, no new research requirements)
+**Key Risks**:
+  - Import breakage across all existing scripts (every file that imports from `experimental.gorn.lib` must be updated)
+  - Existing trace data paths in configs may reference old directory structure
+  - Other researchers may have in-progress work that depends on the old paths
+  - Existing Hydra/training infra in `src/infra/` may conflict with moved modules
+**Success Criteria** (what must be TRUE):
+  1. `src/experimental/` directory no longer exists -- all code promoted to main repo structure
+  2. Shared library code lives in `src/infra/` (model.py, datasets.py, storage.py, config.py, prompts.py, tokens.py, multiprocess.py, utils.py) alongside existing infra modules
+  3. Experiment scripts live in top-level `scripts/` (generate_traces.py, capture_activations.py, check_traces.py, validate.py, verify_phase2.py)
+  4. All imports updated and working -- `from src.infra.model import load_model` etc.
+  5. Full pipeline test passes: trace generation + activation capture on a small subset using new paths
+  6. Other researchers can `from src.infra import ...` from their own scripts
+  7. Tests written for shared infra modules (model loading, dataset loading, storage, config, token parsing)
+  8. Configs updated to reflect new paths (no references to experimental/gorn/)
+**Plans**: 3 plans
+
+Plans:
+- [ ] 02.1-01-PLAN.md -- Move files to new locations, delete old training code, update pyproject.toml and .gitignore
+- [ ] 02.1-02-PLAN.md -- Fix all imports (from lib.X -> from src.infra.X), config path resolution, YAML config paths
+- [ ] 02.1-03-PLAN.md -- Sync dependencies, validate imports, write Tier 1 unit tests for shared infra
+
 ### Phase 3: Probing and Transition Detection
 **Goal**: Researcher has layer-wise probe AUROC curves across all three datasets with selectivity controls, per-trace transition points with quality categorization, cosine similarity dynamics with statistical tests, and Cox 2x2 classification of post-transition CoT segments. Probes train on `ground_truth` (abstract validity: Yes/No), decoupled from output token (Rho/Tau) by the swapped-label protocol.
-**Depends on**: Phase 2
+**Depends on**: Phase 2.1
 **Requirements**: REQ-P1, REQ-P2, REQ-P3, REQ-P4, REQ-P5
 **Key Risks**:
   - Spurious probe correlations due to high dimension-to-sample ratio (P1: d=4096, n=1500; must run selectivity controls from day one)
@@ -162,12 +188,13 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in strict numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6. Each phase depends on the previous phase's output.
+Phases execute in strict numeric order: 1 -> 2 -> 2.1 -> 3 -> 4 -> 5 -> 6. Each phase depends on the previous phase's output.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|---------------|--------|-----------|
 | 1. Foundation and Validation | 6/6 | Complete | 2026-02-04 |
 | 2. Trace Generation at Scale | 6/6 | Complete | 2026-02-05 |
+| 2.1 Repo Restructure and Shared Infra Stabilization | 0/3 | Not started | - |
 | 3. Probing and Transition Detection | 0/TBD | Not started | - |
 | 4. Differential Analysis and Vector Extraction | 0/TBD | Not started | - |
 | 5. Causal Steering Validation | 0/TBD | Not started | - |
