@@ -27,5 +27,5 @@ gpus: [0]
 seed: 137
 
 paths:
-  data_dir: "src/experimental/gorn/data"
-  experiments_dir: "src/experimental/gorn/experiments"
+  data_dir: "data"
+  experiments_dir: "experiments"

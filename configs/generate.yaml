@@ -19,4 +19,4 @@ data:
   strategyqa_problems: 100
 
 paths:
-  traces_dir: "src/experimental/gorn/data/traces"
+  traces_dir: "data/traces"
