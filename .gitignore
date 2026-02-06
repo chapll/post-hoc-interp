@@ -15,7 +15,6 @@ downloads/
 eggs/
 .eggs/
 lib/
-!src/experimental/gorn/lib/
 lib64/
 parts/
 sdist/
@@ -28,7 +27,7 @@ share/python-wheels/
 MANIFEST
 
 # Data
-src/experimental/gorn/data/
+data/
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -212,10 +211,6 @@ __marimo__/
 
 # Hydra outputs
 outputs/
-
-# Personal deploy configs (copy submitit_example.yaml to your own)
-configs/deploy/submitit_*.yaml
-!configs/deploy/submitit_example.yaml
 
 # Experiment outputs
 exp/
