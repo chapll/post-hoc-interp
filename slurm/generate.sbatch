@@ -5,12 +5,11 @@
 #SBATCH --time=24:00:00
 #SBATCH --cpus-per-task=16
 #SBATCH --ntasks=1
-#SBATCH --mem=128G
-#SBATCH --gres=gpu:1
+#SBATCH --mem=256G
+#SBATCH --gres=gpu:8
 
-# Usage: sbatch --partition=$SLURM_PARTITION test.sbatch [overrides...]
-# Example: sbatch --partition=high test.sbatch model.max_new_tokens=50 data.problems_per_dataset=2
-# For multi-GPU: edit --gres=gpu:N and pass gpus=[0,1,...,N-1]
+# Usage: sbatch --partition=$SLURM_PARTITION slurm/generate.sbatch [overrides...]
+# Example: sbatch --partition=high slurm/generate.sbatch
 
 # SLURM_SUBMIT_DIR is the directory where sbatch was invoked.
 # $(dirname "$0") does NOT work -- SLURM copies scripts to a spool directory.

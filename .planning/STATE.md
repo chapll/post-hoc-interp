@@ -5,14 +5,14 @@
 See: .planning/PROJECT.md (updated 2026-02-04)
 
 **Core value:** Identify the exact internal transition point where Qwen3-8B shifts from "searching" to "knowing" the answer, and provide mechanistic causal evidence that post-transition tokens are performative.
-**Current focus:** Phase 2.1 complete (repo restructure and shared infra stabilization). All 3 plans done. Ready for Phase 3.
+**Current focus:** Phase 2.1 complete and UAT passed (10/10). Full-scale trace generation running on 8 GPUs. Ready for Phase 3.
 
 ## Current Position
 
 Phase: 2.1 of 6 (Repo Restructure and Shared Infra Stabilization)
 Plan: 3 of 3 (smoke test and Tier 1 unit tests)
 Status: Phase complete
-Last activity: 2026-02-06 -- Completed 02.1-03-PLAN.md (smoke test and Tier 1 unit tests)
+Last activity: 2026-02-12 -- Phase 2.1 UAT passed (10/10). Full-scale trace generation submitted on 8 GPUs.
 
 Progress: [#########.] ~45%
 
@@ -76,6 +76,9 @@ Recent decisions affecting current work:
 - Removed dead .gitignore entries for old Hydra configs/deploy/ patterns during restructure
 - **_find_project_root() walks up to pyproject.toml for config path resolution** (robust to future moves)
 - **pytest added as dev optional dependency (not main) to keep production env lean**
+- **SLURM scripts in slurm/**: generate.sbatch (full run, 8 GPU), smoke-test.sbatch (quick sanity check, 1 GPU)
+- **slurm/submit wrapper**: sources .env and passes --partition to sbatch automatically
+- **User .env required**: EXP_DIR, DATA_DIR, SLURM_PARTITION (see PROJECT.md Environment Setup)
 
 ### Roadmap Evolution
 
@@ -83,10 +86,10 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-- Delete old test data in data/traces/ before full-scale run (old Yes/No prompts)
-- Run full-scale trace generation on 4 GPUs with swapped-label protocol (~400 problems x 2 configs x 3 traces = ~2400 traces)
+- ~~Delete old test data in data/traces/ before full-scale run (old Yes/No prompts)~~ -- checked 2026-02-12, no old data found
+- ~~Run full-scale trace generation with swapped-label protocol~~ -- submitted on 8 GPUs (2026-02-12)
+- ~~GPU integration smoke test~~ -- passed during UAT (job 281033, 49 traces generated)
 - Run full-scale activation capture after generation completes
-- GPU integration smoke test (manual): generate traces + capture activations on single GPU to validate pipeline end-to-end
 
 ### Blockers/Concerns
 
@@ -96,6 +99,6 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-02-06
-Stopped at: Completed 02.1-03-PLAN.md (smoke test and Tier 1 unit tests). Phase 2.1 complete. Next: Phase 3 (Activation Capture).
+Last session: 2026-02-12
+Stopped at: Phase 2.1 UAT complete. SLURM infra added (slurm/submit, generate.sbatch, smoke-test.sbatch). Full-scale trace generation running on 8 GPUs. Next: Phase 3 (Probing and Transition Detection).
 Resume file: None

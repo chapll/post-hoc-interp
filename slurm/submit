@@ -1,0 +1,7 @@
+#!/bin/bash
+# Wrapper that sources .env and submits sbatch jobs with the correct partition.
+# Usage: slurm/submit slurm/generate.sbatch [overrides...]
+set -a
+source "$(dirname "$0")/../.env"
+set +a
+exec sbatch --partition="$SLURM_PARTITION" "$@"
