@@ -1,226 +1,259 @@
 # Testing Patterns
 
-**Analysis Date:** 2026-02-03
+**Analysis Date:** 2026-02-06
 
 ## Test Framework
 
-**Status:** Not Currently Configured
+**Status:** No formal test framework detected
 
-This project has no test framework installed or configured. The codebase does not include:
-- pytest, unittest, or other test runners
-- Test configuration files (pytest.ini, setup.cfg, pyproject.toml test settings)
-- Any test files in the repository
-- Testing-related dependencies in `pyproject.toml`
+**Observations:**
+- No test files found (`test_*.py`, `*_test.py`, `*.spec.py` patterns returned no results)
+- No test framework config files (`pytest.ini`, `jest.config.*`, etc.)
+- No test dependencies in `pyproject.toml` (only production dependencies listed)
 
-**Linting Framework:**
-- Tool: ruff
-- Version: Configured in `pyproject.toml`
-- Run Commands:
-```bash
-uv run ruff check .              # Check for linting issues
-uv run ruff format .             # Format code
-```
+**Test Runner:**
+Not applicable - no test suite present
+
+**Run Commands:**
+No test commands defined in `pyproject.toml` scripts section
 
 ## Test File Organization
 
-**Current State:** No test files exist
+**Location:**
+No test files exist in the codebase
 
-**Expected Pattern (if tests were added):**
-- Location: `tests/` directory at project root (co-located approach is not yet established)
-- Naming: `test_*.py` or `*_test.py` pattern
-- Structure: One test file per source module (e.g., `tests/test_train_iterator.py` for `src/infra/train_iterator.py`)
+**Naming:**
+Not established
 
-**Recommended Directory Structure:**
-```
-tests/
-├── __init__.py
-├── conftest.py                    # Shared fixtures and configuration
-├── test_infra/
-│   ├── __init__.py
-│   ├── test_train_iterator.py
-│   ├── test_checkpointer.py
-│   ├── test_logging.py
-│   ├── test_parallelisms.py
-│   └── test_optimizers.py
-├── test_models/
-│   ├── __init__.py
-│   └── test_mlp.py
-└── test_train.py
-```
+**Structure:**
+Not applicable
 
 ## Test Structure
 
-**Components that would benefit from testing:**
+**Suite Organization:**
+Not applicable - no test suite exists
 
-**1. TrainingIterator (`src/infra/train_iterator.py`):**
-- Critical class for training loop management
-- Complex logic for timeout detection and checkpointing
-- Would need tests for:
-  - Step iteration and resumption
-  - Metric tracking via `add_metric()` and `add_multi()`
-  - Checkpoint interval logic
-  - Timeout checkpoint detection
-  - Progress message formatting
+**Current Validation Approach:**
+The codebase uses runtime validation scripts instead of unit tests:
 
-**2. Checkpointer (`src/infra/checkpointer.py`):**
-- Handles distributed checkpoint save/load
-- Uses PyTorch distributed checkpoint API
-- Would need tests for:
-  - State dict creation and loading
-  - Metadata handling (WandB ID persistence)
-  - Model, optimizer, scheduler state preservation
-  - Fallback loading for different checkpoint formats
+Validation script in experimental pipeline:
+- `src/experimental/gorn/scripts/validate.py` (690 lines)
+- `src/experimental/gorn/scripts/check_traces.py` (371 lines)
+- `src/experimental/gorn/scripts/verify_phase2.py` (902 lines)
 
-**3. ParameterGroupManager (`src/infra/optimizers.py`):**
-- Pure function logic for parameter categorization
-- Would benefit from unit tests:
-  - `is_ttt_parameter()` pattern matching
-  - `should_skip_weight_decay()` pattern matching
-  - Parameter grouping correctness
+These scripts validate data integrity and trace quality at runtime rather than using a test framework.
 
-**4. LRScheduleFunctions (`src/infra/optimizers.py`):**
-- Schedule calculations that must be numerically correct
-- Would need tests for:
-  - Warmup phase behavior
-  - Cosine decay calculations
-  - Linear decay calculations
-  - Edge cases (lr_peak == 0, step boundaries)
+## Mocking
 
-**5. Distributed Utilities (`src/infra/parallelisms.py`):**
-- Device mesh initialization and configuration
-- Would need tests for:
-  - World mesh creation with various sharding configs
-  - Assertion validation
-  - Tensor parallelism plan generation
+**Framework:** None
 
-## Mocking Strategy (If Tests Were Written)
+**Patterns:**
+No mocking infrastructure. The codebase appears to be research-oriented with validation done on real data rather than via mocked unit tests.
 
-**Distributed Operations:**
-- Mock `torch.distributed` calls in non-distributed tests
-- Mock rank determination: `get_rank()` should return 0 for single-process tests
-- Mock broadcast operations for cross-rank communication
+## Fixtures and Factories
 
-**File I/O:**
-- Mock `os.makedirs` and file operations in logging tests
-- Use temporary directories for integration tests
+**Test Data:**
+Not applicable for formal tests.
 
-**WandB:**
-- Mock `wandb.init()` and `wandb.log()` in MultiLogger tests
-- Mock `wandb.run` object for run resumption tests
+**Research Data:**
+Dataset loaders handle real data:
+- GSM-Symbolic: Loaded from HuggingFace `apple/GSM-Symbolic` dataset
+- FOLIO: Loaded from HuggingFace `tasksource/folio` dataset
+- StrategyQA: Loaded from HuggingFace `ChilleD/StrategyQA` dataset
 
-**PyTorch Checkpoint:**
-- Mock `torch.distributed.checkpoint` calls for unit tests
-- Use real checkpoints for integration tests
-
-## Fixtures and Test Data
-
-**Potential Test Fixtures (if tests were added):**
-
+Deterministic data generation via seeded RNG:
 ```python
-# conftest.py example structure (not present)
-import pytest
-from omegaconf import OmegaConf
-from src.config import Config
-
-@pytest.fixture
-def base_config():
-    """Fixture providing minimal valid config"""
-    return OmegaConf.structured(Config)
-
-@pytest.fixture
-def simple_model():
-    """Fixture for simple test model"""
-    from src.models.mlp import TwoLayerMLP
-    return TwoLayerMLP(input_dim=1, hidden_dim=8, output_dim=1)
-
-@pytest.fixture
-def simple_optimizer(simple_model):
-    """Fixture for optimizer"""
-    return torch.optim.Adam(simple_model.parameters(), lr=1e-3)
+rng = random.Random(seed)
+# ... use rng for reproducible shuffling/sampling
 ```
 
-**Test Data Location (if tests were written):**
-- `tests/fixtures/` directory for YAML config samples
-- `tests/fixtures/checkpoints/` for test checkpoint files
-- In-memory generation for simple tensor data in unit tests
+**Location:**
+- Dataset loaders: `src/experimental/gorn/lib/datasets.py`
+- Prompt builders: `src/experimental/gorn/lib/prompts.py`
 
 ## Coverage
 
-**Requirements:** Not enforced (no coverage tools configured)
+**Requirements:** None enforced
 
-**If Coverage Were Added:**
-- Recommended minimum: 80% for core infrastructure
-- Priority areas: `TrainingIterator`, `Checkpointer`, `ParameterGroupManager`, `LRScheduleFunctions`
-- Lower priority: model definitions (tested via integration tests), config loading (Hydra tested externally)
+**View Coverage:**
+Not applicable - no coverage tooling configured
 
-## Test Types (Not Yet Implemented)
+## Test Types
 
-**Unit Tests (Would Test):**
-- Pure functions: `LRScheduleFunctions.cosine_decay_with_warmup()`, `set_random_seed()`
-- Parameter categorization: `ParameterGroupManager` methods
-- Config loading and validation
-- Individual optimizer/scheduler creation
+**Unit Tests:**
+Not present
 
-**Integration Tests (Would Test):**
-- Full training loop with `TrainingIterator`
-- Checkpoint save and load cycle
-- Distributed training setup (with 2-4 processes)
-- Multi-logger file writing and WandB integration
+**Integration Tests:**
+Not present
 
-**End-to-End Tests (Would Test):**
-- Full training run from config to checkpoint
-- Resumption from checkpoint at various steps
-- Timeout-based checkpointing
-- Multi-node distributed training on Slurm
+**E2E Tests:**
+Not present
 
-## Patterns for Future Tests
+**Validation Scripts:**
+The codebase uses validation scripts that serve similar purposes to integration tests:
 
-**Async/Distributed Testing Pattern:**
+- **Trace validation** (`src/experimental/gorn/scripts/validate.py`): Validates generated traces for correctness, checks token boundaries, verifies think blocks
+- **Trace checking** (`src/experimental/gorn/scripts/check_traces.py`): Summarizes trace statistics, detects anomalies
+- **Phase 2 verification** (`src/experimental/gorn/scripts/verify_phase2.py`): End-to-end verification of multi-stage pipeline outputs
+
+## Common Patterns
+
+**Error Testing:**
+Not applicable in traditional test sense.
+
+Runtime error handling uses assertions and exceptions:
 ```python
-# Example (not present in codebase)
-@pytest.mark.parametrize("tp_sharding,dp_sharding", [(1, 4), (2, 2), (4, 1)])
-def test_parallelism_combinations(tp_sharding, dp_sharding):
-    # Mock distributed setup
-    # Verify mesh creation
-    pass
+assert gc_freq > 0, "gc_freq must be a positive integer"
+
+if not torch.cuda.is_available():
+    raise RuntimeError(
+        "CUDA is not available. This pipeline requires GPU. "
+        "No CPU fallback is provided."
+    )
 ```
 
-**Config-Parametrized Tests:**
+**Async Testing:**
+Not applicable
+
+## Validation Patterns
+
+Since the codebase lacks formal tests, validation is done through:
+
+**1. Type Checking:**
+Extensive type hints enable static analysis via mypy (though no mypy config detected)
+
+**2. Runtime Assertions:**
+Invariant checks throughout codebase:
 ```python
-# Example (not present in codebase)
-@pytest.mark.parametrize("schedule_type", [ScheduleType.COSINE, ScheduleType.LINEAR])
-def test_lr_schedules(schedule_type):
-    # Test different schedule implementations
-    pass
+assert dist.get_world_size() % tp_sharding == 0, "world size must be divisible by tp_sharding"
+assert dp_sharding <= global_bs, "dp_sharding must be greater than or equal to the global batch size"
 ```
 
-**Fixture-Based State Testing:**
+**3. Configuration Validation:**
+Configs are validated at runtime via OmegaConf schema and explicit checks
+
+**4. Data Validation Scripts:**
+Dedicated validation scripts check pipeline outputs:
+
+From `src/experimental/gorn/scripts/validate.py`:
+- Validates trace structure (token_ids, metadata, think blocks)
+- Checks activation shapes match expected dimensions
+- Verifies logit top-k values and indices
+- Ensures entropy calculations are correct
+
+**5. Logging and Monitoring:**
+Extensive logging throughout pipeline serves diagnostic purpose:
 ```python
-# Example (not present in codebase)
-def test_training_iterator_resume(training_iterator):
-    # Simulate step progression
-    # Save state
-    # Load state
-    # Verify resumption
-    pass
+logger.warning(
+    "GSM-Symbolic row %d: no #### separator in answer, skipping",
+    idx
+)
 ```
 
-## Known Testing Gaps
+**6. Reproducibility via Seeding:**
+Deterministic behavior enforced through seed management:
 
-**Critical Gaps:**
-- No testing infrastructure at all
-- Complex distributed training code (`parallelisms.py`) untested
-- Checkpoint loading/saving has no regression tests
-- Training loop state management (`TrainingIterator`) has no unit tests
+From `src/experimental/gorn/lib/utils.py:11`:
+```python
+def set_seed(seed: int) -> None:
+    """Set deterministic random seeds across all relevant libraries."""
+    if seed == 42:
+        raise ValueError("Seed 42 is not allowed. Use any other seed value.")
 
-**Impact:**
-- Refactoring carries high risk
-- Bugs in distributed code may only appear under specific Slurm configurations
-- Checkpoint compatibility changes could break resumption silently
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+```
 
-**Recommendation:**
-Start with unit tests for pure functions in `optimizers.py` and `utils.py`, then add integration tests for `TrainingIterator` with mocked distributed operations.
+## Testing Recommendations
+
+**For Future Development:**
+
+1. **Add pytest framework:**
+```bash
+# Add to pyproject.toml dependencies
+pytest>=8.0.0
+pytest-cov>=4.1.0
+pytest-mock>=3.12.0
+```
+
+2. **Organize tests:**
+```
+tests/
+├── unit/
+│   ├── test_datasets.py
+│   ├── test_prompts.py
+│   └── test_utils.py
+├── integration/
+│   ├── test_pipeline.py
+│   └── test_trace_generation.py
+└── fixtures/
+    └── sample_data.py
+```
+
+3. **Test small functions first:**
+Start with pure functions in `src/experimental/gorn/lib/`:
+- `tokens.py`: `parse_think_boundaries()`, `get_think_content_mask()`
+- `prompts.py`: `build_verification_prompt()`, `_build_gsm_prompt()`
+- `utils.py`: `set_seed()`, `setup_logging()`
+
+4. **Mock external dependencies:**
+- HuggingFace dataset loaders
+- Model inference calls
+- File I/O operations
+
+5. **Consider property-based testing:**
+For data validation logic, use `hypothesis` to test edge cases:
+```python
+from hypothesis import given
+import hypothesis.strategies as st
+
+@given(st.lists(st.integers(min_value=0, max_value=200000)))
+def test_parse_think_boundaries_robust(token_ids):
+    blocks = parse_think_boundaries(token_ids)
+    # Verify blocks are well-formed, non-overlapping, etc.
+```
+
+## Current Testing Gap Analysis
+
+**Untested Critical Areas:**
+
+1. **Token boundary parsing** (`src/experimental/gorn/lib/tokens.py`):
+   - Risk: Incorrect think block detection breaks entire pipeline
+   - Files: `src/experimental/gorn/lib/tokens.py`
+   - Priority: High
+
+2. **Dataset loaders** (`src/experimental/gorn/lib/datasets.py`):
+   - Risk: Incorrect label mapping or data corruption
+   - Files: `src/experimental/gorn/lib/datasets.py`
+   - Priority: High
+
+3. **Prompt construction** (`src/experimental/gorn/lib/prompts.py`):
+   - Risk: Wrong label tokens break swapped-label protocol
+   - Files: `src/experimental/gorn/lib/prompts.py`
+   - Priority: High
+
+4. **Configuration loading** (`src/experimental/gorn/lib/config.py`, `src/config.py`):
+   - Risk: Config merging bugs lead to wrong hyperparameters
+   - Files: `src/experimental/gorn/lib/config.py`, `src/config.py`
+   - Priority: Medium
+
+5. **Training infrastructure** (`src/infra/*`):
+   - Risk: Distributed training setup failures, checkpoint corruption
+   - Files: `src/infra/parallelisms.py`, `src/infra/checkpointer.py`, `src/infra/train_iterator.py`
+   - Priority: Medium (current validation via runtime logging)
+
+**Team Conventions Needed:**
+
+Since this is a multi-user research codebase (Ali, Gorn, Eric), establish:
+- **Who writes tests:** Should experimental code include tests, or only core infrastructure?
+- **Test data management:** How to share test fixtures across team members with different compute environments
+- **CI/CD:** No CI detected - consider adding GitHub Actions for basic smoke tests
+- **Pre-commit hooks:** No pre-commit config - consider adding ruff formatting checks
 
 ---
 
-*Testing analysis: 2026-02-03*
+*Testing analysis: 2026-02-06*

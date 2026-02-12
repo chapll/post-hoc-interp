@@ -1,112 +1,106 @@
 # External Integrations
 
-**Analysis Date:** 2026-02-03
+**Analysis Date:** 2026-02-06
 
 ## APIs & External Services
 
+**HuggingFace Hub:**
+- Model loading: `Qwen/Qwen3-8B` (8B parameter language model)
+  - SDK/Client: `nnsight` (wraps HuggingFace transformers)
+  - Direct model access: via `nnsight.LanguageModel` with `device_map` and `dispatch=True`
+  - Architecture: 36 layers, 4096 hidden dim, bfloat16 dtype
+  - Implementation: `src/experimental/gorn/lib/model.py`
+- Dataset loading: HuggingFace `datasets` library
+  - GSM-Symbolic: `apple/GSM-Symbolic` (main split)
+  - FOLIO: `tasksource/folio` (train + validation splits)
+  - StrategyQA: `ChilleD/StrategyQA` (train split)
+  - Implementation: `src/experimental/gorn/lib/datasets.py`
+- Auth: Not required (public datasets and models)
+
 **Experiment Tracking:**
-- WandB (Weights & Biases)
-  - Purpose: Cloud-based experiment tracking, metrics logging, run resumption, alerts
-  - SDK/Client: `wandb` 0.23.1+
-  - Auth: WandB API key (via local `~/.config/wandb` or `~/.cache/wandb`)
+- Weights & Biases (wandb)
+  - Project: `cs224n`
+  - Entity: `chapll`
+  - SDK: `wandb` Python library
   - Configuration: `configs/wandb/default.yaml`
-    - Project: `cs224n`
-    - Entity: `chapll` (WandB team/account)
-    - Log interval: 50 steps
-    - Optional alerts enabled via `cfg.wandb.alert`
-  - Usage: `src/infra/logging.py` WandBLogger class handles init and logging
-  - Features:
-    - Run resumption via run ID broadcast across distributed ranks
-    - Automatic config serialization to WandB metadata
-    - Per-rank coordination (only rank 0 writes to WandB)
+  - Features: Metrics logging, alerts on job launch/resume
+  - Implementation: `src/infra/logging.py` (WandBLogger class)
 
 ## Data Storage
 
 **Databases:**
-- Not applicable - no database integrations
+- None (research codebase uses local file storage)
 
 **File Storage:**
-- Local filesystem only
-  - Experiment outputs: `EXP_DIR` (from `.env`)
-  - Training data: `DATA_DIR` (from `.env`)
-  - Checkpoints: `${deploy_paths.run_dir}/checkpoint/` (timestamped run directory)
-  - Logs: `${deploy_paths.run_dir}/log.txt`
-  - Config snapshots: `${deploy_paths.run_dir}/config.yaml` (resolved YAML)
-  - Statistics: `${deploy_paths.run_dir}/all_stat_dict.pth` (PyTorch tensor dict)
+- Local filesystem
+  - Experiment outputs: `${EXP_DIR}` (per-user, set in `.env`)
+  - Datasets: `${DATA_DIR}` (per-user, set in `.env`)
+  - Activations: Stored as safetensors files (`.safetensors` format)
+  - Checkpoints: PyTorch distributed checkpoints via `torch.distributed.checkpoint`
+  - Logs: Text logs (`log.txt`) and PyTorch state dicts (`all_stat_dict.pth`)
 
 **Caching:**
-- None (model runs are designed for deterministic training)
-- Directory structure auto-generated per run with timestamp
+- HuggingFace datasets cache (default `~/.cache/huggingface/`)
+- Model cache (managed by nnsight/transformers, default `~/.cache/huggingface/hub/`)
 
 ## Authentication & Identity
 
 **Auth Provider:**
-- Custom (per-user environment variables)
-  - Implementation: `.env` file-based configuration
-  - Load mechanism: `python-dotenv` in `src/train.py`
-  - WandB authentication: Uses local WandB config from previous `wandb login` (not env var based)
+- None (no user authentication system)
+
+**Team Access:**
+- Git-based collaboration (shared repository)
+- Per-user environment configuration via `.env` files (gitignored)
+- Shared wandb entity/project for experiment tracking
 
 ## Monitoring & Observability
 
 **Error Tracking:**
-- None detected
+- None (standard Python logging only)
 
 **Logs:**
-- Dual file/terminal logging via `MultiLogger` in `src/infra/logging.py`
-  - Terminal: Python logging (rank 0 only in distributed mode)
-  - File: `log.txt` in run directory
-  - Both: Metrics via WandB (when enabled)
-- Timestamp format: America/Los_Angeles timezone (hardcoded in logging)
-- Progress: tqdm progress bars (if used in model training)
+- Python `logging` module (INFO level)
+- Dual logging: terminal + file (`log.txt` in experiment dir)
+- Timezone: America/Los_Angeles
+- Per-GPU logs in distributed mode (rank-based filtering)
+- Implementation: `src/infra/logging.py` (MultiLogger class)
 
-**Distributed Communication Debugging:**
-- NCCL trace environment variables (set in `src/infra/parallelisms.py`):
-  - `TORCH_NCCL_AVOID_RECORD_STREAMS=1`: Mitigates memory issues with async collectives
-  - NCCL_TRACE_BUFFER_SIZE, TORCH_NCCL_DEBUG_INFO_TEMP_FILE, etc. available but not pre-enabled
+**Metrics:**
+- Wandb metrics logged at configurable intervals (default: every 50 steps)
+- Local metrics saved to `all_stat_dict.pth`
+- Checkpoint metrics saved to `checkpoint/step-{N}/all_stat_dict.pth`
 
 ## CI/CD & Deployment
 
 **Hosting:**
-- Slurm HPC clusters (primary deployment target)
-- Interactive/local single-node (development mode)
+- Not applicable (research code, local/cluster execution only)
 
 **CI Pipeline:**
 - None detected
 
-**Deployment Methods:**
-- Interactive mode: `uv run train +deploy=interactive job.exp_name=experiment`
-  - Runs locally on a single machine
-  - Config: `configs/deploy/interactive.yaml`
-  - Hydra mode: RUN (single run, not multirun)
-
-- Cluster submission: `uv run train +deploy=submitit` or `+deploy=submitit_yourname`
-  - Uses submitit to launch Slurm jobs
-  - Config: `configs/deploy/submitit.yaml` or `configs/deploy/submitit_yourname.yaml` (per-user)
-  - Slurm parameters (from config):
-    - nodes: 1 (default, override with `hydra.launcher.nodes=4`)
-    - tasks_per_node: 1
-    - gpus_per_node: 8
-    - cpus_per_task: 32
-    - timeout_min: 60
-    - mem_gb: 256
-  - Partition/account: From `SLURM_PARTITION` and `SLURM_ACCOUNT` env vars
-  - Hydra mode: MULTIRUN (supports sweep directories)
+**Execution Modes:**
+1. Interactive (local): `uv run train +deploy=interactive`
+2. Slurm cluster: `uv run train +deploy=submitit`
+   - Launcher: `hydra-submitit-launcher` with `submitit_slurm`
+   - Per-user cluster config via `.env`: `SLURM_PARTITION`, `SLURM_ACCOUNT`
 
 ## Environment Configuration
 
 **Required env vars:**
-- `EXP_DIR`: Path where experiment outputs are saved (defaults to `./exp`)
-- `DATA_DIR`: Path where training data is located (defaults to `./data`)
-- `SLURM_PARTITION`: Slurm partition name (required for cluster submission, no default)
-- `SLURM_ACCOUNT`: Optional Slurm account for billing
-
-**Optional env vars for NCCL debugging:**
-- `KINETO_LOG_LEVEL=5`: Suppress PyTorch Profiler noise (set in logging.py)
-- `TORCH_NCCL_*`: NCCL trace/debug flags (defined but not activated in parallelisms.py)
+- `EXP_DIR` - Experiment output directory (per-user)
+- `DATA_DIR` - Dataset storage directory (per-user)
+- `SLURM_PARTITION` - Slurm partition name (for cluster execution)
+- `SLURM_ACCOUNT` - Slurm account (optional, for cluster execution)
 
 **Secrets location:**
-- WandB: `~/.config/wandb/settings-` (login token stored locally after `wandb login`)
-- `.env` file: Gitignored, contains user-specific paths only (no credentials)
+- `.env` file (gitignored, per-user)
+- `.env.example` provides template (committed to git)
+- Note: Current setup does not require API keys or secrets for HuggingFace (uses public resources only)
+
+**Config resolution:**
+- OmegaConf resolvers for environment variables: `${oc.env:VAR_NAME,default}`
+- Custom resolvers for timestamps: `${now_date:}`, `${now_time:}`
+- Registered in `src/train.py` before Hydra initialization
 
 ## Webhooks & Callbacks
 
@@ -114,30 +108,41 @@
 - None
 
 **Outgoing:**
-- WandB alerts (optional):
-  - Title: Job launch or resume notifications
-  - Sent via `wandb.run.alert()` when `cfg.wandb.alert=true`
-  - Messages include job name and wandb_id for resumption
+- Wandb alerts (optional, configured via `cfg.wandb.alert`)
+  - Job launch notifications
+  - Job resume notifications
 
-## Distributed Training Integration
+## Model Inference
 
-**NCCL Backend:**
-- Process group init: `torch.distributed.init_process_group("nccl")`
-- Timeout: `cfg.comm.init_timeout_seconds` (default: 300 seconds)
-- Device assignment: Per-rank CUDA device via `LOCAL_RANK` env var
-- Synchronization: Barrier before cleanup via `torch.distributed.barrier()`
+**Qwen3-8B Inference:**
+- Generation via HuggingFace `model.generate()`
+  - Temperature: 0.6, top_p: 0.95, top_k: 20
+  - Sampling: enabled (`do_sample=True`)
+  - Max tokens: 8192 (configurable)
+  - Special mode: `enable_thinking=True` in chat template
+- Activation capture via nnsight trace
+  - Full-sequence residual streams at subset of layers (default: [0, 4, 8, 12, 16, 20, 24, 28, 32, 35])
+  - Last-token activations at all 36 layers
+  - Full logits from lm_head
+  - Storage: bfloat16 CPU tensors in dict format
 
-**Checkpoint Storage & Resumption:**
-- Uses `torch.distributed.checkpoint` (DCP)
-- State dicts saved:
-  - Model weights/buffers
-  - Optimizer state
-  - LR scheduler state
-  - Data module sampler state (if applicable)
-  - Metadata (wandb_id for resumption)
-- Checkpoint path: `${deploy_paths.run_dir}/checkpoint/step-{step}/`
-- Auto-resume: Via `cfg.checkpoint.resume=true` (loads latest step by default)
+## Compute Resources
+
+**GPU Management:**
+- CUDA device assignment per process/worker
+- Multi-GPU support:
+  - PyTorch distributed (NCCL backend)
+  - FSDP (Fully Sharded Data Parallel)
+  - Tensor Parallelism (configurable via `configs/parallelism/`)
+  - Data Parallelism
+- Multiprocessing: Custom isolated worker pools in `src/experimental/gorn/lib/multiprocess.py`
+
+**Team-Specific Compute:**
+- Ali: B200 GPUs (highest compute)
+- Gorn: A100 GPUs (high compute)
+- Eric: Limited compute resources
+- Config files provide templates; actual batch sizes and parallelism settings customized per member
 
 ---
 
-*Integration audit: 2026-02-03*
+*Integration audit: 2026-02-06*

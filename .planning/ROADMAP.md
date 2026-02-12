@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Foundation and Validation** - Model loading, datasets, config, storage, and end-to-end nnsight validation on a single problem
 - [x] **Phase 2: Trace Generation at Scale** - Two-pass trace generation across ~400 problems with multi-GPU parallelism and contamination mitigation
-- [ ] **Phase 2.1: Repo Restructure and Shared Infra Stabilization** (INSERTED) - Promote experimental/gorn/ code to main repo structure, eliminate experimental dirs, validate all imports and pipeline stability
+- [x] **Phase 2.1: Repo Restructure and Shared Infra Stabilization** (INSERTED) - Promote experimental/gorn/ code to main repo structure, eliminate experimental dirs, validate all imports and pipeline stability
 - [ ] **Phase 3: Probing and Transition Detection** - Linear probes, selectivity controls, transition point identification, cosine similarity dynamics, Cox 2x2 framework
 - [ ] **Phase 4: Differential Analysis and Vector Extraction** - Performativity vector via Difference in Means, cross-dataset analysis, IPHR reversed pairs, unfaithfulness patterns
 - [ ] **Phase 5: Causal Steering Validation** - Steering with performativity vector, sham controls, entropy baseline, greedy pruning baseline, random/midpoint baselines
@@ -95,9 +95,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 02.1-01-PLAN.md -- Move files to new locations, delete old training code, update pyproject.toml and .gitignore
-- [ ] 02.1-02-PLAN.md -- Fix all imports (from lib.X -> from src.infra.X), config path resolution, YAML config paths
-- [ ] 02.1-03-PLAN.md -- Sync dependencies, validate imports, write Tier 1 unit tests for shared infra
+- [x] 02.1-01-PLAN.md -- Move files to new locations, delete old training code, update pyproject.toml and .gitignore
+- [x] 02.1-02-PLAN.md -- Fix all imports (from lib.X -> from src.infra.X), config path resolution, YAML config paths
+- [x] 02.1-03-PLAN.md -- Sync dependencies, validate imports, write Tier 1 unit tests for shared infra
 
 ### Phase 3: Probing and Transition Detection
 **Goal**: Researcher has layer-wise probe AUROC curves across all three datasets with selectivity controls, per-trace transition points with quality categorization, cosine similarity dynamics with statistical tests, and Cox 2x2 classification of post-transition CoT segments. Probes train on `ground_truth` (abstract validity: Yes/No), decoupled from output token (Rho/Tau) by the swapped-label protocol.
@@ -194,7 +194,7 @@ Phases execute in strict numeric order: 1 -> 2 -> 2.1 -> 3 -> 4 -> 5 -> 6. Each 
 |-------|---------------|--------|-----------|
 | 1. Foundation and Validation | 6/6 | Complete | 2026-02-04 |
 | 2. Trace Generation at Scale | 6/6 | Complete | 2026-02-05 |
-| 2.1 Repo Restructure and Shared Infra Stabilization | 0/3 | Not started | - |
+| 2.1 Repo Restructure and Shared Infra Stabilization | 3/3 | Complete | 2026-02-06 |
 | 3. Probing and Transition Detection | 0/TBD | Not started | - |
 | 4. Differential Analysis and Vector Extraction | 0/TBD | Not started | - |
 | 5. Causal Steering Validation | 0/TBD | Not started | - |

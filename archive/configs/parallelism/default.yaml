@@ -1,0 +1,4 @@
+tp_sharding: 1
+dp_sharding: 1
+dp_replicate: 1
+fsdp_unsharded_dtype: bfloat16

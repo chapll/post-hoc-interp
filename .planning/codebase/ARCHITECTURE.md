@@ -1,175 +1,183 @@
 # Architecture
 
-**Analysis Date:** 2026-02-03
+**Analysis Date:** 2026-02-06
 
 ## Pattern Overview
 
-**Overall:** Layered distributed training framework with pluggable infrastructure components.
+**Overall:** Dual-mode research architecture with shared training infrastructure and per-researcher experimental sandboxes
 
 **Key Characteristics:**
-- Hydra-based configuration management with composable config groups
-- Distributed training support (multi-node NCCL, FSDP, tensor parallelism)
-- Infrastructure abstraction layer separating training logic from implementation details
-- Checkpoint/resume capability with distributed state management
-- Experiment-based configuration composition
+- Hydra-based configuration system with hierarchical composition
+- Shared infrastructure modules for distributed training, checkpointing, and logging
+- Per-researcher experimental directories with isolated environments and configs
+- Two-pass activation capture pipeline: trace generation decoupled from activation storage
+- Multi-GPU parallelism via both torch.distributed (training) and torch.multiprocessing (inference)
 
 ## Layers
 
-**Configuration Layer:**
-- Purpose: Define and compose all training parameters using Hydra
-- Location: `configs/`
-- Contains: YAML configuration files organized by domain (job, model, training, checkpoint, parallelism, comm, wandb, deploy)
-- Depends on: OmegaConf for structure and resolvers
-- Used by: All other layers via DictConfig instances
-
-**Entry Point & Orchestration:**
-- Purpose: Bootstrap training, coordinate all components
-- Location: `src/train.py`
-- Contains: `@hydra.main` decorator, config initialization, logger setup, train function dispatch
-- Depends on: Config, Logger, Model
-- Used by: CLI invocation
-
-**Infrastructure Layer (`src/infra/`):**
-- Purpose: Provide reusable training utilities and distributed coordination
+**Infrastructure Layer (src/infra/):**
+- Purpose: Provides reusable distributed training primitives and experiment management
 - Location: `src/infra/`
-- Contains: Checkpointing, logging, distributed setup, optimization, utilities
-- Depends on: PyTorch distributed, WandB, OmegaConf
-- Used by: Training scripts and models
+- Contains: Parallelism setup (FSDP, TP), checkpointing, logging (WandB + file), optimizers, training iterators
+- Depends on: PyTorch distributed, Hydra config system, WandB
+- Used by: Main training entry point (`src/train.py`), potentially by experimental scripts
 
-**Model Layer:**
-- Purpose: Define trainable neural network architectures
+**Model Layer (src/models/):**
+- Purpose: Model implementations and architecture definitions
 - Location: `src/models/`
-- Contains: TwoLayerMLP (test model), extensible for real models
-- Depends on: PyTorch nn module
-- Used by: Training layer
+- Contains: Currently only `src/models/mlp.py` (simple 2-layer MLP for infrastructure validation)
+- Depends on: PyTorch nn modules
+- Used by: Training scripts
+- Note: Minimal currently; main research uses external Qwen3-8B via HuggingFace/nnsight
 
-**Experimental Layer:**
-- Purpose: Isolated per-researcher code and data
-- Location: `src/experimental/{researcher}/`
-- Contains: Personal experiments, data artifacts, research code
-- Depends on: Core infrastructure
-- Used by: Individual researchers
+**Experimental Sandboxes (src/experimental/{user}/):**
+- Purpose: Per-researcher isolated workspaces with user-specific hardware configs and experiments
+- Location: `src/experimental/ali/`, `src/experimental/eric/`, `src/experimental/gorn/`
+- Contains: User-specific scripts, configs, and library modules
+- Depends on: Researcher's GPU availability (Ali: B200, Gorn: A100, Eric: limited compute)
+- Used by: Individual researchers running experiments outside shared training loop
+- Note: Most active is `src/experimental/gorn/` with trace generation pipeline
+
+**Configuration Layer (configs/):**
+- Purpose: Hydra configuration composition system with user-customizable overlays
+- Location: `configs/` (project-wide templates), `src/experimental/gorn/configs/` (user-specific)
+- Contains: Base configs, deploy profiles (interactive, submitit), experiment presets, parallelism settings
+- Depends on: OmegaConf resolvers, environment variables from `.env`
+- Used by: Hydra decorator in entry points
+- Note: Configs are PLACEHOLDERS—each user customizes via `.env` and personal deploy configs
 
 ## Data Flow
 
-**Training Initialization Flow:**
+**Shared Training Flow:**
 
-1. Hydra resolves `configs/config.yaml` with defaults and CLI overrides
-2. `src/train.py::main()` receives resolved `DictConfig`
-3. Logger initialized via `get_logger(cfg)` (singleton pattern)
-4. Config saved to `run_dir/config.yaml` for reproducibility
-5. Distributed setup via `init_distributed()` if multi-GPU
-6. Model instantiated (e.g., `TwoLayerMLP` from `src/models/mlp.py`)
-7. Optimizer created via `create_optimizer()` with parameter groups
-8. Optional: Load checkpoint via `checkpointer.load()`
-9. Training loop begins
+1. Entry point: `src/train.py` main() decorated with `@hydra.main`
+2. Hydra composes config from `configs/config.yaml` + defaults + CLI overrides
+3. Environment variables loaded from `.env` (EXP_DIR, DATA_DIR, SLURM settings)
+4. Logger initialized: `src/infra/logging.py` creates MultiLogger with WandB and file output
+5. Training function executed with simple MLP identity task (0→0, 1→1)
+6. Metrics logged to both terminal and `{run_dir}/log.txt`
 
-**Training Step Flow:**
+**Gorn's Trace Generation Pipeline (Decoupled Two-Pass):**
 
-1. `TrainingIterator` wraps the main loop (iterator protocol)
-2. Forward pass: model(batch) → outputs
-3. Loss computation: criterion(outputs, targets)
-4. Backward pass: loss.backward()
-5. Optimizer step: optimizer.step()
-6. Metrics tracked via `add_metric()` and `add_multi()`
-7. After each step, check if checkpoint/save needed
-8. Logger writes progress with EMA iteration timing
-9. WandB log on rank 0 only
+1. Stage 1 - Trace Generation (`src/experimental/gorn/scripts/generate_traces.py`):
+   - Load datasets via `src/experimental/gorn/lib/datasets.py` (GSM-Symbolic, FOLIO, StrategyQA)
+   - Apply swapped-label protocol expansion (A/B configs with Rho/Tau tokens)
+   - Split problems across GPUs via `src/experimental/gorn/lib/multiprocess.py`
+   - Each worker loads Qwen3-8B via `src/experimental/gorn/lib/model.py` (nnsight wrapper)
+   - Generate thinking-mode traces with `enable_thinking=True` chat template
+   - Parse think block boundaries via `src/experimental/gorn/lib/tokens.py`
+   - Route to valid/ or failed/ directories based on think block presence
+   - Save JSON with token_ids, text, metadata atomically via `src/experimental/gorn/lib/storage.py`
 
-**Checkpoint Flow (on interval or timeout):**
-
-1. `TrainingIterator._checkpoint()` triggered
-2. `Checkpointer.save()` called with step path
-3. Distributed checkpoint via `torch.distributed.checkpoint`
-4. State saved: model, optimizer, lr_scheduler, datamodule sampler, metadata (wandb_id)
-5. Statistics saved to `step-{N}/all_stat_dict.pth`
-
-**Resume Flow:**
-
-1. `TrainingIterator.resume(step)` called
-2. If step=-1, auto-detect latest via `get_latest_checkpoint_step()`
-3. Load distributed state via `Checkpointer.load()`
-4. Multi-stats loaded, WandB job_id restored
-5. Training continues from checkpoint step
+2. Stage 2 - Activation Capture (`src/experimental/gorn/scripts/capture_activations.py`):
+   - Load valid trace JSONs from `data/traces/valid/`
+   - For each trace, run forward pass via nnsight with trace context
+   - Capture residual stream at layer subset [0, 4, 8, 12, 16, 20, 24, 28, 32, 35]
+   - Capture last-token activations at all 36 layers
+   - Compute top-k logits and entropy per position
+   - Save as safetensors to `data/activations/` with BF16 dtype
 
 **State Management:**
-
-- Training state stored in distributed checkpoint format (rank-sharded)
-- Statistics accumulated per-step in `multi_stats` dict (lists)
-- Logging state: file handle (rank 0 only) + WandB run
-- Optimizer state: per-parameter-group learning rate via scheduler
-- Model state: FSDP shards + optional tensor parallel shards
+- Training checkpoints: Distributed checkpoint format via `src/infra/checkpointer.py` (DCP)
+- Experiment logs: Per-run directories with timestamped names `{date}/{exp_name}_{time}/`
+- Activation storage: Decoupled safetensors files (activations) + JSON metadata (traces)
 
 ## Key Abstractions
 
-**TrainingIterator:**
-- Purpose: Provide progress tracking, checkpointing, timeout handling as iterator
-- Examples: `src/infra/train_iterator.py`
-- Pattern: Python iterator protocol with side effects (timing, logging, checkpoint logic)
-- Key methods: `__iter__`, `__next__`, `add_metric()`, `add_multi()`, `resume()`
+**MultiLogger (src/infra/logging.py):**
+- Purpose: Unified logging interface combining terminal, file, and WandB outputs
+- Examples: `src/infra/logging.py:MultiLogger`, used in `src/train.py:main()`
+- Pattern: Singleton pattern via get_logger(); rank-0-only file writes in distributed mode
 
-**MultiLogger:**
-- Purpose: Unified logging to file + WandB across ranks
-- Examples: `src/infra/logging.py`
-- Pattern: Singleton accessed via `get_logger(cfg)`, rank-gated writes
-- Key methods: `write()`, `init_log()`, `save_multi()`, `load_multi()`
+**Checkpointer (src/infra/checkpointer.py):**
+- Purpose: Save/load model, optimizer, scheduler, and data sampler state for distributed training
+- Examples: `src/infra/checkpointer.py:Checkpointer`
+- Pattern: Wrapper around torch.distributed.checkpoint with metadata preservation (WandB ID tracking)
 
-**Checkpointer:**
-- Purpose: Save/load distributed training state atomically
-- Examples: `src/infra/checkpointer.py`
-- Pattern: Wrapper around torch.distributed.checkpoint with metadata handling
-- Key methods: `save()`, `load()`, `load_pretrained()`
+**Parallelism Mesh (src/infra/parallelisms.py):**
+- Purpose: Configure tensor parallel, FSDP, and data parallel dimensions for distributed training
+- Examples: `src/infra/parallelisms.py:get_world_mesh()`, `apply_parallelisms()`
+- Pattern: Device mesh creation with named dimensions (dp_replicate, dp_shard, tp)
 
-**ParameterGroupManager:**
-- Purpose: Categorize model parameters for differential optimizer treatment
-- Examples: `src/infra/optimizers.py`
-- Pattern: Static methods for TTT/SSM vs. base parameter separation, weight decay rules
+**Multi-GPU Work Splitting (src/experimental/gorn/lib/multiprocess.py):**
+- Purpose: Distribute data-parallel inference across GPUs with fault isolation
+- Examples: `run_parallel_isolated()` for production trace generation, `run_parallel()` for debugging
+- Pattern: torch.multiprocessing with 'spawn' context; round-robin work distribution; per-worker model loading
 
-**Parallelism (FSDP + TP):**
-- Purpose: Distributed model sharding across devices/nodes
-- Examples: `src/infra/parallelisms.py`
-- Pattern: `init_distributed()` sets up process group, `apply_parallelisms()` shards model
-- Configurable: tp_sharding, dp_sharding, dp_replicate mesh dimensions
+**nnsight Activation Capture (src/experimental/gorn/lib/model.py):**
+- Purpose: Capture intermediate activations from transformer layers during forward pass
+- Examples: `capture_activations()` in `src/experimental/gorn/lib/model.py`
+- Pattern: Context manager wrapping forward pass; .save() proxies for deferred tensor access
+
+**Storage Layer (src/experimental/gorn/lib/storage.py):**
+- Purpose: Atomic file writes, deterministic seed derivation, dtype enforcement for trace/activation persistence
+- Examples: `write_trace_json()`, `prepare_trace_tensors()`, `derive_trace_seed()`
+- Pattern: Tempfile + os.rename for atomicity; MD5-based deterministic seeding; dtype normalization (BF16, int32)
 
 ## Entry Points
 
-**Main Training:**
-- Location: `src/train.py::main()`
-- Triggers: `uv run train` with Hydra config overrides
-- Responsibilities: Config loading, logger init, distributed setup, train execution, cleanup
+**Main Training Entry Point:**
+- Location: `src/train.py`
+- Triggers: CLI via `uv run train` (configured in `pyproject.toml:project.scripts`)
+- Responsibilities: Hydra config composition, .env loading, logger initialization, simple MLP training loop
 
-**Training Loop:**
-- Location: `src/train.py::train(cfg, logger)`
-- Triggers: Called from `main()` after setup
-- Responsibilities: Model/optimizer creation, data loop, loss computation, checkpointing via TrainingIterator
+**Trace Generation Entry Point:**
+- Location: `src/experimental/gorn/scripts/generate_traces.py`
+- Triggers: Manual CLI execution with `uv run python src/experimental/gorn/scripts/generate_traces.py --config ... --gpus ...`
+- Responsibilities: Dataset loading, swapped-label expansion, multi-GPU generation dispatch, think block validation, JSON output routing
+
+**Activation Capture Entry Point:**
+- Location: `src/experimental/gorn/scripts/capture_activations.py`
+- Triggers: Manual CLI execution after trace generation completes
+- Responsibilities: Load valid traces, nnsight forward pass, residual/logit capture, safetensors persistence
+
+**Trace Validation Entry Point:**
+- Location: `src/experimental/gorn/scripts/validate.py`
+- Triggers: Manual CLI execution to verify pipeline integrity
+- Responsibilities: Check trace/activation pair completeness, validate tensor shapes and dtypes
 
 ## Error Handling
 
-**Strategy:** Fail loudly with clear tracebacks. No fallbacks or mocks.
+**Strategy:** Layer-specific with graceful degradation and explicit logging
 
 **Patterns:**
-
-- Config validation: Hydra/OmegaConf type checking on dataclass fields
-- Distributed errors: NCCL backend defaults to timeout on init failure
-- Checkpoint errors: RuntimeError caught in `Checkpointer.load_pretrained()` to handle format mismatch
-- Training errors: Exceptions propagate up (no try-catch in main loop)
+- Training infrastructure: Exceptions propagate to Hydra/submitit, logged via MultiLogger
+- Multi-GPU generation: Worker crashes isolated via mp.Process; main reports failures without killing other workers
+- File I/O: Atomic writes via tempfile + rename; existence checks for resume capability
+- Model loading: RuntimeError on CUDA unavailability or invalid GPU ID
+- Data parsing: Skip malformed dataset rows with warning logs; continue processing remainder
 
 ## Cross-Cutting Concerns
 
 **Logging:**
-- MultiLogger writes all text to both terminal (via logging module) and file (rank 0 only)
-- WandB initialized on rank 0, job_id broadcast to other ranks for resumption
-- All print statements go through logger.write() for consistency
+- MultiLogger for training (terminal + file + WandB)
+- Python logging module for experimental scripts (per-worker loggers in multi-GPU)
+- Pacific time timezone (pytz America/Los_Angeles)
 
 **Validation:**
-- Config schema defined as dataclasses in `src/config.py` with OmegaConf integration
-- Parallelism dimensions validated: world_size must equal tp_sharding * dp_sharding * dp_replicate
-- Parameter group validation: no trainable params raises ValueError
+- Config validation via OmegaConf with required fields marked `???`
+- Activation shape/dtype validation in storage layer
+- Think block presence validation for trace routing
 
 **Authentication:**
-- WandB entity/project from config, credentials from `wandb login` (local)
-- Distributed init uses environment variables (LOCAL_RANK, RANK, WORLD_SIZE, MASTER_ADDR, MASTER_PORT)
+- WandB API key via environment (implicit from wandb.login())
+- HuggingFace token via environment (for Qwen3 model access)
+- Slurm account/partition via .env file (SLURM_PARTITION, SLURM_ACCOUNT)
+
+**Hardware Awareness:**
+- Per-user GPU configs: Ali (B200), Gorn (A100), Eric (limited)
+- Config files contain PLACEHOLDERS—users customize via .env
+- Experimental scripts accept --gpus CLI arg for explicit device selection
+- Infrastructure layer uses LOCAL_RANK environment variable for distributed training
+- torch.cuda.set_device() called explicitly in worker processes
+
+**Path Configuration:**
+- User-specific paths via .env: EXP_DIR, DATA_DIR
+- Hydra resolvers for dynamic paths: ${now_date:}, ${now_time:}
+- Run directories: `{EXP_DIR}/{date}/{exp_name}_{time}/`
+- Experimental data: Hardcoded relative paths in `src/experimental/gorn/configs/base.yaml`
+- Note: README instructs users to customize configs for their machine
 
 ---
 
-*Architecture analysis: 2026-02-03*
+*Architecture analysis: 2026-02-06*

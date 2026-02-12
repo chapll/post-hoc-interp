@@ -1,207 +1,284 @@
 # Codebase Structure
 
-**Analysis Date:** 2026-02-03
+**Analysis Date:** 2026-02-06
 
 ## Directory Layout
 
 ```
 post-hoc-interp/
-├── src/                           # Main source code
-│   ├── train.py                   # Entry point with @hydra.main
-│   ├── config.py                  # Structured config dataclasses
-│   ├── infra/                     # Infrastructure/utilities
-│   │   ├── train_iterator.py      # Training loop wrapper with checkpointing
-│   │   ├── checkpointer.py        # Distributed state save/load
-│   │   ├── logging.py             # MultiLogger + WandBLogger
-│   │   ├── parallelisms.py        # FSDP + tensor parallelism setup
-│   │   ├── optimizers.py          # AdamW with schedules and parameter groups
-│   │   └── utils.py               # Random seed, timing, GarbageCollection
-│   ├── models/                    # Model implementations
-│   │   └── mlp.py                 # TwoLayerMLP (reference implementation)
-│   └── experimental/              # Per-researcher isolated workspaces
-│       ├── gorn/                  # Researcher: gorn
-│       │   ├── experiments/       # Experiment configs/code
-│       │   └── data/              # Local data artifacts
-│       ├── eric/                  # Researcher: eric
-│       │   └── README.md
-│       └── ali/                   # Researcher: ali
-│           └── README.md
-├── configs/                       # Hydra configuration files
-│   ├── config.yaml                # Root config with defaults
-│   ├── job/                       # Job config group
-│   │   └── default.yaml           # exp_name, seed
-│   ├── model/                     # Model config group
-│   │   └── default.yaml           # name, size, lr
-│   ├── training/                  # Training config group
-│   │   └── default.yaml           # steps, batch_size, warmup_steps, gc_freq
-│   ├── checkpoint/                # Checkpoint config group
-│   │   └── default.yaml           # interval, resume, timeout_minutes
-│   ├── wandb/                     # WandB config group
-│   │   └── default.yaml           # project, entity, disable, log_interval
-│   ├── parallelism/               # Parallelism config group
-│   │   └── default.yaml           # tp_sharding, dp_sharding, fsdp_unsharded_dtype
-│   ├── comm/                      # Communication config group
-│   │   └── default.yaml           # init_timeout_seconds
-│   ├── deploy/                    # Deployment config group
-│   │   ├── interactive.yaml       # Single-node/local execution
-│   │   ├── submitit.yaml          # Multi-node Slurm submission
-│   │   └── submitit_example.yaml  # Template for personal configs
-│   └── experiment/                # Experiment presets
-│       ├── identity.yaml          # Identity function learning task
-│       ├── debug.yaml             # Debug settings
-│       └── test.yaml              # Test run settings
-├── .planning/                     # GSD planning documents
-│   └── codebase/                  # Analysis outputs
-├── .env.example                   # Environment variable template
-├── .venv/                         # Python virtual environment (on dfs)
-├── pyproject.toml                 # Project metadata and dependencies
-├── uv.lock                        # Dependency lock file
-└── CLAUDE.md                      # Project instructions
+├── .env.example           # Template for user-specific environment variables
+├── .python-version        # Python version spec (3.13)
+├── pyproject.toml         # Project metadata, dependencies, uv config
+├── uv.lock                # Locked dependency versions
+├── README.md              # Setup instructions
+├── configs/               # Hydra configuration hierarchy (PLACEHOLDERS)
+│   ├── config.yaml        # Root config with defaults composition
+│   ├── checkpoint/        # Checkpoint interval configs
+│   ├── comm/              # Communication timeout configs
+│   ├── deploy/            # Deployment profiles (interactive, submitit)
+│   ├── experiment/        # Experiment presets (debug, test, identity)
+│   ├── job/               # Job configs (exp_name, seed)
+│   ├── model/             # Model configs (name, size, lr)
+│   ├── parallelism/       # Distributed training configs (TP, DP, FSDP)
+│   ├── training/          # Training hyperparameters
+│   └── wandb/             # WandB project/entity settings
+├── docs/                  # Documentation
+│   └── configuration.md   # Config system docs
+├── src/                   # Source code
+│   ├── train.py           # Main training entry point
+│   ├── config.py          # Dataclass config definitions
+│   ├── models/            # Model implementations
+│   │   └── mlp.py         # Simple 2-layer MLP
+│   ├── infra/             # Shared training infrastructure
+│   │   ├── checkpointer.py      # Distributed checkpoint save/load
+│   │   ├── logging.py           # MultiLogger with WandB integration
+│   │   ├── optimizers.py        # Custom optimizer implementations
+│   │   ├── parallelisms.py      # FSDP, TP, device mesh setup
+│   │   ├── train_iterator.py   # Training loop utilities
+│   │   └── utils.py             # Misc utilities (seed, timing)
+│   └── experimental/      # Per-researcher sandboxes
+│       ├── ali/           # Ali's experiments (B200 GPUs)
+│       ├── eric/          # Eric's experiments (limited compute)
+│       └── gorn/          # Gorn's experiments (A100 GPUs)
+│           ├── configs/   # Gorn-specific config files
+│           │   ├── base.yaml        # Base config for all experiments
+│           │   ├── generate.yaml    # Trace generation config
+│           │   ├── capture.yaml     # Activation capture config
+│           │   └── validate.yaml    # Validation config
+│           ├── scripts/   # Executable experiment scripts
+│           │   ├── generate_traces.py      # Stage 1: Generate thinking traces
+│           │   ├── capture_activations.py  # Stage 2: Capture activations
+│           │   ├── check_traces.py         # Diagnostic script
+│           │   ├── validate.py             # Pipeline validation
+│           │   └── verify_phase2.py        # Phase 2 verification
+│           └── lib/       # Reusable library modules
+│               ├── config.py          # Config loading with CLI overrides
+│               ├── datasets.py        # Dataset loaders (GSM, FOLIO, StrategyQA)
+│               ├── model.py           # nnsight model wrapper and generation
+│               ├── multiprocess.py    # Multi-GPU work distribution
+│               ├── prompts.py         # Prompt templates and label protocols
+│               ├── storage.py         # Trace/activation file I/O
+│               ├── tokens.py          # Token parsing and think boundaries
+│               └── utils.py           # Utility functions (seed, logging)
+└── .planning/             # GSD planning artifacts
+    ├── codebase/          # Codebase documentation (this file)
+    ├── phases/            # Phase plans
+    └── research/          # Research context docs
 ```
 
 ## Directory Purposes
 
-**src/ - Source Code:**
-- Purpose: All trainable and utility code
-- Contains: Entry points, models, infrastructure modules
-- Key files: `train.py` (entry), `config.py` (schema)
+**Root:**
+- Purpose: Project configuration and metadata
+- Contains: Package config (pyproject.toml), dependency locks (uv.lock), environment template (.env.example)
+- Key files: `pyproject.toml` defines train script entry point; `.env.example` shows required user customization
 
-**src/infra/ - Infrastructure:**
-- Purpose: Reusable training utilities for any model
-- Contains: Distributed coordination, checkpointing, logging, optimization
-- Key files: `train_iterator.py`, `checkpointer.py`, `logging.py`, `parallelisms.py`
-- No model-specific code; pure utilities
+**configs/:**
+- Purpose: Hierarchical Hydra configuration templates (PLACEHOLDERS for user customization)
+- Contains: YAML configs organized by concern (deploy, model, training, wandb, etc.)
+- Key files: `configs/config.yaml` is the root with defaults composition; `configs/deploy/submitit.yaml` and `submitit_example.yaml` show Slurm integration
+- Note: Users customize by creating personal deploy configs (e.g., `submitit_yourname.yaml`) or setting .env variables
 
-**src/models/ - Models:**
-- Purpose: Neural network architectures
-- Contains: PyTorch nn.Module implementations
-- Key files: `mlp.py` (reference/test model)
+**src/:**
+- Purpose: All Python source code
+- Contains: Entry points, models, infrastructure, and experimental sandboxes
+- Key files: `src/train.py` is the main training entry point with Hydra decorator
 
-**src/experimental/ - Researcher Workspaces:**
-- Purpose: Isolated development space per researcher
-- Contains: Personal experiments, custom data, ablations
-- Organization: One subdirectory per researcher (gorn/, eric/, ali/)
-- Gitignore note: Use for uncommitted research; commit results to main src/
+**src/models/:**
+- Purpose: Neural network model definitions
+- Contains: Currently only `mlp.py` with simple 2-layer MLP for infrastructure validation
+- Key files: `src/models/mlp.py`
+- Note: Research uses external Qwen3-8B, not defined here
 
-**configs/ - Configuration Files:**
-- Purpose: All training parameters via Hydra
-- Contains: YAML files organized by config groups
-- Key structure: `config.yaml` (root) + group subdirectories
-- Composition: `defaults` in root config compose groups; CLI overrides supported
+**src/infra/:**
+- Purpose: Reusable distributed training infrastructure adapted from test-time-training/ttt-video-dit
+- Contains: Logging, checkpointing, parallelism setup, optimizers, training utilities
+- Key files:
+  - `src/infra/logging.py`: MultiLogger class for terminal + file + WandB
+  - `src/infra/checkpointer.py`: Distributed checkpoint save/load wrapper
+  - `src/infra/parallelisms.py`: FSDP, TP, and device mesh configuration
+  - `src/infra/optimizers.py`: Custom optimizer implementations
+  - `src/infra/train_iterator.py`: Training loop helpers
+  - `src/infra/utils.py`: Seed setting, timing utilities
 
-**configs/experiment/ - Experiment Presets:**
-- Purpose: Pre-built config combinations for common setups
-- Contains: YAML files composing multiple group overrides
-- Examples: `identity.yaml` (identity learning), `debug.yaml` (small/fast)
-- Usage: `uv run train +experiment=debug` applies debug preset
+**src/experimental/:**
+- Purpose: Per-researcher isolated workspaces with user-specific code and configs
+- Contains: Three subdirectories for Ali, Eric, and Gorn
+- Key files: Most active is `src/experimental/gorn/` with complete trace generation pipeline
+- Note: Sandboxed to avoid merge conflicts; each user has different GPU hardware (Ali: B200, Gorn: A100, Eric: limited)
 
-**configs/deploy/ - Deployment Modes:**
-- Purpose: Hardware-specific execution settings
-- Contains: `interactive.yaml` (single-GPU), `submitit.yaml` (multi-node), `submitit_example.yaml` (template)
-- Key params: launcher, nodes, partition, account
+**src/experimental/gorn/configs/:**
+- Purpose: Gorn's experiment-specific configuration files
+- Contains: Base config plus stage-specific overlays (generate, capture, validate)
+- Key files:
+  - `src/experimental/gorn/configs/base.yaml`: Model, data, storage, paths config
+  - `src/experimental/gorn/configs/generate.yaml`: Trace generation settings (GSM problems per type, FOLIO/StrategyQA counts)
+  - `src/experimental/gorn/configs/capture.yaml`: Activation capture layer subset
+  - `src/experimental/gorn/configs/validate.yaml`: Validation thresholds
 
-**docs/ - Documentation:**
-- Purpose: Project-level documentation
-- Contains: Architecture notes, setup guides (not currently populated)
+**src/experimental/gorn/scripts/:**
+- Purpose: Executable Python scripts for trace generation pipeline stages
+- Contains: Multi-GPU scripts for generation, capture, validation
+- Key files:
+  - `src/experimental/gorn/scripts/generate_traces.py`: Stage 1 trace generation with multi-GPU
+  - `src/experimental/gorn/scripts/capture_activations.py`: Stage 2 activation capture
+  - `src/experimental/gorn/scripts/validate.py`: Pipeline integrity validation
+  - `src/experimental/gorn/scripts/check_traces.py`: Diagnostic trace inspection
+  - `src/experimental/gorn/scripts/verify_phase2.py`: Phase 2 verification script
+
+**src/experimental/gorn/lib/:**
+- Purpose: Reusable library modules for trace generation pipeline
+- Contains: Model wrappers, dataset loaders, multiprocessing utilities, storage layer
+- Key files:
+  - `src/experimental/gorn/lib/model.py`: nnsight model loading and activation capture
+  - `src/experimental/gorn/lib/datasets.py`: GSM-Symbolic, FOLIO, StrategyQA loaders with binary verification format
+  - `src/experimental/gorn/lib/multiprocess.py`: Multi-GPU work splitting with fault isolation
+  - `src/experimental/gorn/lib/storage.py`: Safetensors save/load, atomic JSON writes, deterministic seeding
+  - `src/experimental/gorn/lib/prompts.py`: Swapped-label prompt construction
+  - `src/experimental/gorn/lib/tokens.py`: Think block boundary parsing
+  - `src/experimental/gorn/lib/config.py`: Config file loading with argparse CLI overrides
+  - `src/experimental/gorn/lib/utils.py`: Seed setting, logger setup
+
+**docs/:**
+- Purpose: Human-readable documentation
+- Contains: Currently only `configuration.md`
+- Key files: `docs/configuration.md` explains Hydra config system usage
+
+**.planning/:**
+- Purpose: GSD (Get Stuff Done) planning and tracking artifacts
+- Contains: Codebase docs, phase plans, research context
+- Key files: This file is in `.planning/codebase/STRUCTURE.md`
 
 ## Key File Locations
 
 **Entry Points:**
-- `src/train.py`: Main entry point with Hydra decorator; calls train() function
-- `configs/config.yaml`: Root Hydra config; specifies defaults and paths
+- `src/train.py`: Main training script with Hydra decorator
+- `src/experimental/gorn/scripts/generate_traces.py`: Trace generation entry point
+- `src/experimental/gorn/scripts/capture_activations.py`: Activation capture entry point
 
 **Configuration:**
-- `src/config.py`: Dataclass schema for all config groups (JobConfig, TrainingConfig, etc.)
-- `pyproject.toml`: Project metadata, uv dependencies, scripts
+- `configs/config.yaml`: Root Hydra config
+- `.env.example`: Template for user-specific paths and Slurm settings (copy to `.env`)
+- `src/experimental/gorn/configs/base.yaml`: Gorn's base experiment config
 
 **Core Logic:**
-- `src/train.py::train()`: Simple MLP training loop (reference implementation)
-- `src/infra/train_iterator.py`: Progress, metrics, checkpointing wrapper
-- `src/infra/checkpointer.py`: Distributed checkpoint save/load logic
+- `src/infra/logging.py`: MultiLogger implementation
+- `src/infra/parallelisms.py`: Distributed training setup
+- `src/experimental/gorn/lib/model.py`: Model loading and activation capture
+- `src/experimental/gorn/lib/multiprocess.py`: Multi-GPU orchestration
+- `src/experimental/gorn/lib/datasets.py`: Dataset loading and preprocessing
 
-**Infrastructure:**
-- `src/infra/logging.py`: MultiLogger (file + WandB), rank-gated writes
-- `src/infra/parallelisms.py`: FSDP + tensor parallelism mesh setup
-- `src/infra/optimizers.py`: AdamW with parameter groups and schedules
-- `src/infra/utils.py`: Random seed, GarbageCollection, timing utilities
-
-**Models:**
-- `src/models/mlp.py`: TwoLayerMLP (test model)
+**Testing:**
+- No dedicated test directory currently
+- Validation scripts: `src/experimental/gorn/scripts/validate.py`, `verify_phase2.py`
 
 ## Naming Conventions
 
 **Files:**
-- `{module_name}.py`: Snake case for module names (e.g., `train_iterator.py`, `parallelisms.py`)
-- `config.yaml`: Lowercase, no special chars
-- Checkpoint dirs: `step-{N}` format (e.g., `step-1000`, `step-5000`)
+- Python modules: `lowercase_with_underscores.py`
+- Config files: `lowercase.yaml`
+- Entry point scripts: Descriptive verb phrases (e.g., `generate_traces.py`, `capture_activations.py`)
 
 **Directories:**
-- `src/{module}/`: Snake case for subdirectories
-- `configs/{group}/`: Snake case for config groups
-- `src/experimental/{researcher}/`: Researcher name as subdir
-- `src/experimental/{researcher}/{namespace}/`: Namespace under researcher
+- All lowercase, no underscores for major divisions (`configs`, `models`, `infra`, `experimental`)
+- User-specific directories: First name lowercase (`ali`, `eric`, `gorn`)
 
-**Classes:**
-- PascalCase: `TrainingIterator`, `MultiLogger`, `Checkpointer`, `TwoLayerMLP`
+**Python identifiers:**
+- Classes: PascalCase (e.g., `MultiLogger`, `Checkpointer`, `TwoLayerMLP`)
+- Functions: snake_case (e.g., `get_logger`, `load_model`, `capture_activations`)
+- Constants: UPPER_SNAKE_CASE (e.g., `DEFAULT_LAYER_SUBSET`, `NUM_LAYERS`, `HIDDEN_DIM`)
+- Config dataclasses: PascalCase with "Config" suffix (e.g., `JobConfig`, `ModelConfig`)
 
-**Functions:**
-- snake_case: `create_optimizer()`, `apply_parallelisms()`, `get_logger()`
-
-**Config Keys:**
-- snake_case in YAML: `exp_name`, `global_batch_size`, `warmup_steps`
-- Dot notation in Python: `cfg.job.exp_name`, `cfg.training.steps`
+**Config keys:**
+- YAML keys: snake_case (e.g., `exp_dir`, `max_new_tokens`, `traces_per_problem`)
+- Hydra special: Dotted paths (e.g., `job.exp_name`, `deploy_paths.run_dir`)
 
 ## Where to Add New Code
 
-**New Model:**
-1. Create `src/models/{model_name}.py` with nn.Module class
-2. Implement `__init__()` and `forward()`
-3. Add model config class to `src/config.py`
-4. Create config YAML: `configs/model/{model_name}.yaml`
-5. Use: `uv run train +model={model_name}`
+**New Shared Infrastructure Module:**
+- Primary code: `src/infra/{module_name}.py`
+- Config: `configs/{module_name}/default.yaml`
+- Import in entry points as needed
 
-**New Feature (training, optimizer, etc.):**
-1. Add to appropriate `src/infra/{module}.py` if general utility
-2. Or add to `src/train.py::train()` if experiment-specific
-3. For infrastructure: Add config to appropriate group in `configs/`
-4. For experiment-specific: Use `src/experimental/{your_name}/`
+**New Model Architecture:**
+- Implementation: `src/models/{model_name}.py`
+- Config: `configs/model/{model_name}.yaml`
+- Register in training entry point
 
-**New Experiment Config:**
-1. Create `configs/experiment/{exp_name}.yaml` with preset overrides
-2. Reference: `configs/experiment/debug.yaml` for pattern
-3. Use: `uv run train +experiment={exp_name}`
+**New Experimental Script (for specific researcher):**
+- Script: `src/experimental/{username}/scripts/{script_name}.py`
+- Config: `src/experimental/{username}/configs/{script_name}.yaml`
+- Library support: `src/experimental/{username}/lib/{module_name}.py`
+- Note: Use existing researcher directory (ali, eric, gorn) or create new one for new team member
 
-**Personal Work (uncommitted):**
-1. Use `src/experimental/{your_name}/experiments/` for code
-2. Use `src/experimental/{your_name}/data/` for data artifacts
-3. Directory is .gitignored for personal branches
-4. Commit final results to main codebase when ready
+**New Dataset Loader:**
+- Implementation: `src/experimental/gorn/lib/datasets.py` (add new function)
+- Follow pattern: Return list of dicts with uniform schema (problem_id, question, ground_truth, dataset_name, etc.)
+- Register in `load_dataset_by_name()` dispatcher
+
+**New Deployment Profile:**
+- Config: `configs/deploy/{profile_name}.yaml`
+- Override Hydra launcher settings
+- Example: Copy `configs/deploy/submitit_example.yaml` and customize for specific cluster
+
+**Utilities:**
+- Shared helpers: `src/infra/utils.py`
+- Experimental helpers: `src/experimental/gorn/lib/utils.py`
 
 ## Special Directories
 
-**src/experimental/:**
-- Purpose: Isolated per-researcher development
-- Generated: No, user-created
-- Committed: Only structure/README; actual work typically gitignored
-- Note: Each researcher should have own subdir to avoid conflicts
+**configs/:**
+- Purpose: Hydra configuration templates
+- Generated: No
+- Committed: Yes
+- Note: Contains PLACEHOLDERS—users must customize via .env or personal deploy configs
 
-**.venv/**
-- Purpose: Python virtual environment
-- Generated: Yes (via uv venv)
-- Committed: No (.gitignored)
-- Location: On dfs for space and cache isolation
+**src/experimental/{user}/data/:**
+- Purpose: User-specific data outputs (traces, activations)
+- Generated: Yes (by generation/capture scripts)
+- Committed: No (in .gitignore)
+- Structure: `data/traces/{valid,failed}/{dataset}/{problem_id}/trace_NN.json` and `data/activations/{dataset}/{problem_id}/trace_NN.safetensors`
 
-**outputs/ (referenced in config but not committed):**
-- Purpose: Training run outputs (logs, checkpoints, configs)
-- Generated: Yes (at runtime via deploy_paths)
-- Committed: No
-- Default location: `${EXP_DIR}/{YYYYMMDD}/{exp_name}_{HHMMSS}/`
+**Experiment output directories (from .env EXP_DIR):**
+- Purpose: Training run outputs (logs, checkpoints)
+- Generated: Yes (by training runs)
+- Committed: No (user-specific paths outside repo)
+- Structure: `{EXP_DIR}/{date}/{exp_name}_{time}/`
 
-**checkpoint/ (under run_dir):**
-- Purpose: Distributed checkpoints per step
-- Generated: Yes (on interval or timeout)
-- Structure: `checkpoint/step-{N}/` containing distributed state
+**.planning/:**
+- Purpose: GSD planning artifacts
+- Generated: Yes (by GSD commands)
+- Committed: Yes
+- Note: Used by `/gsd:*` commands for context and planning
+
+**__pycache__/:**
+- Purpose: Python bytecode cache
+- Generated: Yes
+- Committed: No (in .gitignore)
+
+## User-Specific vs Shared Code
+
+**User-Specific Directories:**
+- `src/experimental/ali/`
+- `src/experimental/eric/`
+- `src/experimental/gorn/`
+- Each researcher's experiments, configs, and hardware-specific settings
+
+**Shared Code:**
+- `src/infra/`: Training infrastructure usable by all researchers
+- `src/models/`: Shared model implementations
+- `configs/`: Template configurations (users customize via .env and personal deploy configs)
+
+**Machine-Specific Configuration:**
+- `.env` file (gitignored): EXP_DIR, DATA_DIR, SLURM_PARTITION, SLURM_ACCOUNT
+- `configs/deploy/submitit_{username}.yaml`: Per-user Slurm cluster settings
+- `src/experimental/{user}/configs/`: Hardcoded relative paths in base.yaml are user-customizable
+
+**Cross-User Collaboration Pattern:**
+- Shared infrastructure changes: Commit to `src/infra/` and `configs/` templates
+- User experiments: Keep in `src/experimental/{user}/`; coordinate via .planning/ docs
+- Hardware differences: Document in config comments; use CLI args (--gpus) for flexibility
 
 ---
 
-*Structure analysis: 2026-02-03*
+*Structure analysis: 2026-02-06*

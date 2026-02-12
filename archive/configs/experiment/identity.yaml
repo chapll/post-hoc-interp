@@ -1,0 +1,15 @@
+# @package _global_
+# Simple identity task: train MLP to output 0 for input 0, 1 for input 1
+
+job:
+  exp_name: identity-mlp
+
+model:
+  name: mlp
+  lr: 0.01
+
+training:
+  steps: 1000
+
+wandb:
+  disable: true

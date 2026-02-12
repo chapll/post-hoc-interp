@@ -1,115 +1,272 @@
 # Coding Conventions
 
-**Analysis Date:** 2026-02-03
+**Analysis Date:** 2026-02-06
 
 ## Naming Patterns
 
 **Files:**
-- Python modules use snake_case: `train_iterator.py`, `parallelisms.py`, `checkpointer.py`
-- Test files (none present): would follow `test_*.py` or `*_test.py` pattern
-- Config files: YAML files in `configs/` with flat structure
-- Classes use PascalCase: `TwoLayerMLP`, `TrainingIterator`, `Checkpointer`, `MultiLogger`
+- Python modules: `snake_case.py` (`train.py`, `config.py`, `logging.py`)
+- Scripts: Descriptive names in `snake_case` (`generate_traces.py`, `capture_activations.py`, `verify_phase2.py`)
+- Config files: Lowercase with underscores (`base.yaml`, `generate.yaml`, `submitit_example.yaml`)
 
 **Functions:**
-- Functions use snake_case: `get_logger()`, `init_distributed()`, `apply_parallelisms()`, `add_metric()`
-- Private methods prefixed with underscore: `_checkpoint()`, `_print_progress()`, `_should_checkpoint()`, `_time_step()`
-- Static methods in utility classes: `ParameterGroupManager.is_ttt_parameter()`, `LRScheduleFunctions.cosine_decay_with_warmup()`
+- Standard: `snake_case` (`set_seed`, `load_model`, `get_device`, `build_verification_prompt`)
+- Private helpers: Prefix with underscore (`_balance_and_sample`, `_generate_distractor`, `_build_gsm_prompt`)
+- Context managers: Use descriptive names (`TimedContext`)
 
 **Variables:**
-- Local variables use snake_case: `model`, `optimizer`, `checkpoint_interval`, `total_steps`
-- Constants use UPPER_SNAKE_CASE: `MODEL_STATE_DICT_KEY`, `DEFAULT_TIMEZONE`, `TORCH_DTYPE_MAP`, `NO_WEIGHT_DECAY_PATTERNS`
-- Private globals use leading underscore: `_multi_logger`
+- Local variables: `snake_case` (`token_ids`, `problem_id`, `dataset_name`, `max_new_tokens`)
+- Constants: `UPPER_SNAKE_CASE` (`THINK_TOKEN_ID`, `THINK_END_TOKEN_ID`, `DEFAULT_TIMEZONE`, `LABEL_MAPPINGS`)
+- Class attributes: `UPPER_SNAKE_CASE` for constants (`NO_WEIGHT_DECAY_PATTERNS`, `TTT_PARAMETER_PATTERNS`, `WEIGHT_DECAY_VALUE`)
 
-**Types:**
-- Type hints used throughout: `def __init__(self, start_step, total_steps, logger: MultiLogger, checkpointer: Checkpointer)`
-- Return type hints: `-> None`, `-> int`, `-> torch.Tensor`
-- Dataclasses for configuration: `@dataclass class JobConfig:`, `@dataclass(frozen=True) class ScheduleConfig:`
-- Enum for schedule types: `class ScheduleType(str, Enum):` with values `COSINE`, `LINEAR`
+**Classes:**
+- `PascalCase` (`TwoLayerMLP`, `MultiLogger`, `WandBLogger`, `GarbageCollection`, `ParameterGroupManager`)
+- Enums: `PascalCase` with members in `UPPER_CASE` (`ScheduleType.COSINE`, `ScheduleType.LINEAR`)
+- Dataclasses: Config classes use `PascalCase` with `Config` suffix (`JobConfig`, `ModelConfig`, `TrainingConfig`)
+
+**Modules:**
+- Package structure: `src/` root with subpackages `infra/`, `models/`, `experimental/gorn/`
+- Experimental work: Isolated in `src/experimental/{username}/` directories (e.g., `src/experimental/gorn/`)
 
 ## Code Style
 
 **Formatting:**
-- Line length: 160 characters (configured in `pyproject.toml` with `[tool.ruff] line-length = 160`)
-- Import organization follows: stdlib → third-party (torch, omegaconf, hydra) → local imports
-- No extraneous comments or decorative formatting
-- Plain text output with simple print statements
+- Tool: Ruff (configured in `pyproject.toml`)
+- Line length: 160 characters (see `pyproject.toml`: `line-length = 160`)
+- Python version: Requires Python 3.13+
 
 **Linting:**
-- Tool: ruff (configured in `pyproject.toml`)
-- Commands: `uv run ruff check .` and `uv run ruff format .`
-- No configuration for other linters (eslint, mypy, black) found in project
+- No explicit linter config files (`.flake8`, `.pylintrc`) detected
+- Ruff handles both formatting and linting
+
+**Import Sorting:**
+Not enforced via config. Observed pattern varies between modules.
 
 ## Import Organization
 
 **Order:**
-1. Standard library imports: `import os`, `from datetime import datetime`, `from pathlib import Path`
-2. Third-party imports: `import torch`, `from omegaconf import DictConfig`, `from hydra import main`
-3. Local imports: `from src.infra.logging import get_logger`, `from src.models.mlp import TwoLayerMLP`
+1. Standard library imports (grouped, typically unordered)
+2. Third-party imports (PyTorch, transformers, datasets, etc.)
+3. Local project imports (using `from src.` or relative imports)
+
+**Examples:**
+
+From `src/train.py`:
+```python
+from datetime import datetime
+from pathlib import Path
+
+from dotenv import load_dotenv
+from omegaconf import DictConfig, OmegaConf
+
+# ... OmegaConf setup ...
+
+import hydra
+import torch
+import torch.nn as nn
+
+from src.infra.logging import get_logger
+from src.models.mlp import TwoLayerMLP
+```
+
+From `src/experimental/gorn/scripts/generate_traces.py`:
+```python
+import gc
+import logging
+import os
+import sys
+import time
+
+import torch
+
+# -- project imports ----------------------------------------------------------
+sys.path.insert(0, "src/experimental/gorn")
+
+from lib.config import load_config
+from lib.datasets import (...)
+```
 
 **Path Aliases:**
-- No aliases configured in source files, uses absolute imports from project root: `from src.infra.checkpointer import Checkpointer`
+- Standard project imports use absolute: `from src.infra.logging import ...`
+- Experimental code uses `sys.path.insert` hack for relative imports within experiment: `sys.path.insert(0, "src/experimental/gorn")` then `from lib.config import ...`
+
+**Note on Team Conventions:**
+The `sys.path.insert` pattern in experimental code is user-specific (Gorn's experimental directory). Main codebase uses clean absolute imports from `src.`.
 
 ## Error Handling
 
 **Patterns:**
-- Assertions for validation: `assert wandb.run is not None, "WandB run failed to initialize."`
-- Try-except for fallback loading in `Checkpointer.load_pretrained()`: catches `RuntimeError` when loading model state
-- Direct error propagation: `raise ValueError("No parameters found for the group")` in `ParameterGroupManager.create_param_group()`
-- Type assertions with type ignore comments: `torch.distributed.all_reduce(..., op=torch.distributed.ReduceOp.MAX)  # type: ignore`
+- Use exceptions for control flow: `raise ValueError(...)`, `raise RuntimeError(...)`, `raise FileNotFoundError(...)`
+- Assertions for invariant checks: `assert dist.get_world_size() % tp_sharding == 0, "..."`
+- Try-except for graceful degradation in worker processes (see `src/experimental/gorn/scripts/generate_traces.py:191`)
+
+**Common patterns:**
+
+Validation with descriptive errors:
+```python
+if seed == 42:
+    raise ValueError("Seed 42 is not allowed. Use any other seed value.")
+```
+
+GPU availability checks (no silent CPU fallback):
+```python
+if not torch.cuda.is_available():
+    raise RuntimeError(
+        "CUDA is not available. This pipeline requires GPU. "
+        "No CPU fallback is provided."
+    )
+```
+
+Worker-level exception handling (log and continue):
+```python
+try:
+    # Generate trace...
+except Exception:
+    failed_count += 1
+    worker_logger.exception(
+        "Worker %d: error generating %s trace %d",
+        rank,
+        problem_id,
+        trace_index,
+    )
+    continue
+```
 
 ## Logging
 
-**Framework:**
-- `logging` standard library for terminal logging, configured by Hydra
-- `MultiLogger` custom wrapper class in `src/infra/logging.py` handles both terminal and file logging
-- `WandBLogger` wrapper for WandB integration
+**Framework:** Python `logging` module (standard library)
 
 **Patterns:**
-- Only rank 0 writes logs in distributed training: `if get_rank() == 0`
-- Log to file with `logger.write(text)` method
-- Log terminal vs file separately: `logger.write(text, log_terminal=False)` for file-only logs
-- Metrics logged via `WandBLogger.log(stats, step=step)` in `save_multi()` method
+- Create module-level loggers: `logger = logging.getLogger(__name__)`
+- Use `setup_logging(name)` helper in experimental code (see `src/experimental/gorn/lib/utils.py:56`)
+- Log levels: INFO for progress, WARNING for issues, ERROR/EXCEPTION for failures
+- Format: `[LEVEL] name: message` (see `src/experimental/gorn/lib/utils.py:76`)
+
+**Multi-logger pattern:**
+Main training infrastructure uses custom `MultiLogger` (`src/infra/logging.py:90`) that:
+- Writes to both terminal and log file
+- Integrates with WandB for metric tracking
+- Supports rank-aware logging (only rank 0 writes to file in distributed mode)
+
+**Examples:**
+
+Module-level logger:
+```python
+logger = logging.getLogger(__name__)
+# ...
+logger.info("GSM-Symbolic: loaded %d rows", len(ds))
+logger.warning("No think block found, routing to failed/")
+```
+
+Custom MultiLogger for training:
+```python
+logger = get_logger(cfg)
+logger.write(f"Step {step}/{total} | Loss: {loss.item():.6f}")
+logger.write("Config details", log_terminal=False)  # File only
+```
 
 ## Comments
 
 **When to Comment:**
-- Licensing headers on adapted/borrowed code: all adapted infrastructure files include copyright notice
-- Docstrings on public classes and methods: `"""Train a simple MLP on the identity task (0→0, 1→1)."""`
-- Inline comments for non-obvious logic: `# Throw out first time since it usually is an outlier`, `# Only rank 0 writes logs`
-- Parameter explanations in docstrings: `Args:` and `Returns:` sections
+- Module docstrings: Every module has a docstring explaining purpose (see `src/experimental/gorn/lib/datasets.py:1`)
+- Function docstrings: Public functions have Google-style docstrings with Args/Returns/Raises
+- Inline comments: Used sparingly for non-obvious logic or important warnings
+- Copyright notices: Files adapted from external sources include attribution (see `src/infra/logging.py:1-3`)
 
-**JSDoc/TSDoc:**
-- Not applicable (Python project, not JavaScript/TypeScript)
-- Uses standard Python docstrings with Args/Returns/Raises sections in complex functions
+**Docstring Style:**
+Google-style with typed parameters:
+
+```python
+def set_seed(seed: int) -> None:
+    """Set deterministic random seeds across all relevant libraries.
+
+    Args:
+        seed: Integer seed value. Must not be 42.
+
+    Raises:
+        ValueError: If seed is 42.
+    """
+```
+
+Multi-paragraph module docstrings for complex modules:
+```python
+"""Dataset loaders for binary verification format.
+
+Loads GSM-Symbolic, FOLIO, and StrategyQA from HuggingFace, converts each
+problem into base problem dicts with balanced Yes/No ground truth labels.
+
+Prompts are NOT built here. Use lib.prompts.build_verification_prompt() to
+construct prompts with configurable label tokens...
+"""
+```
 
 ## Function Design
 
-**Size:**
-- Utility functions are focused and short: `get_logger()` is 5 lines, `set_random_seed()` is 8 lines
-- Iterator methods split into multiple small private methods: `__next__()` calls `_time_step()`, `_print_progress()`, `_checkpoint()`
-- Larger functions document internal steps: `apply_parallelisms()` is 11 lines with clear progression
+**Size:** No strict limit, but worker functions tend to be 50-150 lines. Helpers are shorter (10-50 lines).
 
 **Parameters:**
-- Named parameters in `__init__` methods: `__init__(self, start_step, total_steps, logger: MultiLogger, checkpointer: Checkpointer, checkpoint_interval=0, ...)`
-- Kwargs used for flexible stats: `add_multi(**kwargs)` in `TrainingIterator`
-- Dataclass configs for grouped parameters: `config: DictConfig` contains all training settings
+- Use type hints consistently: `def load_config(script_config: str = None) -> DictConfig:`
+- Config objects passed as first parameter: `def train(cfg: DictConfig, logger) -> None:`
+- Use keyword arguments for clarity in calls with many parameters
 
 **Return Values:**
-- Functions return single values or tuples: `create_specialized_optimizer()` returns `Tuple[torch.optim.AdamW, List[ScheduleConfig]]`
-- None returned for side-effect functions: `def train(cfg: DictConfig, logger) -> None`
-- Optional returns for failures: `get_latest_checkpoint_step()` returns `None` if no checkpoints found
+- Explicit return type hints: `-> None`, `-> dict[str, torch.Tensor]`, `-> list[dict]`
+- Return tuples when multiple values needed: `-> tuple[int, int] | None`
+- Use `| None` for optional returns (Python 3.10+ union syntax)
 
 ## Module Design
 
 **Exports:**
-- Infrastructure modules export main classes: `TrainingIterator`, `Checkpointer`, `MultiLogger`
-- Utility functions are module-level: `get_logger()`, `init_distributed()`, `set_random_seed()`
-- No explicit `__all__` declarations in modules
+- No explicit `__all__` declarations
+- Import specific names: `from lib.config import load_config`
+- Group related imports: `from lib.datasets import (load_folio, load_gsm_symbolic_contamination, load_strategyqa)`
 
 **Barrel Files:**
-- No barrel files (`__init__.py`) importing and re-exporting found in project structure
-- Direct imports from specific modules: `from src.infra.train_iterator import TrainingIterator`
+- `__init__.py` files are empty (see `src/experimental/gorn/lib/__init__.py`, `src/experimental/gorn/scripts/__init__.py`)
+- No re-exports; imports are direct from modules
+
+## Configuration Management
+
+**Framework:** Hydra + OmegaConf for main training, custom OmegaConf loader for experimental scripts
+
+**Patterns:**
+- Environment variable interpolation: `${oc.env:EXP_DIR,./exp}` (see `configs/config.yaml:13`)
+- Custom resolvers for dynamic values: `${now_date:}`, `${now_time:}` (see `src/train.py:11-12`)
+- Hierarchical configs with defaults: `defaults:` section loads base configs (see `configs/config.yaml:1-9`)
+- CLI overrides: Hydra supports `+deploy=interactive` syntax; experimental code uses dotlist (`model.name=foo`)
+
+**Per-user configuration:**
+- `.env` file for user-specific paths (gitignored, with `.env.example` template)
+- Deployment configs: Users create `configs/deploy/submitit_yourname.yaml` from example
+- Data/experiment paths configurable via environment variables (`EXP_DIR`, `DATA_DIR`, `SLURM_PARTITION`)
+
+**Team convention standardization needed:**
+- Import style differs between main codebase (clean absolute imports) and experimental code (`sys.path.insert` hack)
+- Configuration approach differs: Hydra for main training vs. custom argparse+OmegaConf for experimental scripts
+- Consider standardizing on one config approach for consistency
+
+## Type Annotations
+
+**Usage:** Extensive type hints on function signatures, return values, and complex variables
+
+**Patterns:**
+- Modern union syntax: `int | float`, `str | None` (Python 3.10+)
+- Generic types: `list[dict]`, `dict[str, torch.Tensor]`, `tuple[int, int]`
+- Dataclasses use field type annotations: `exp_name: str = "default-job"`
+
+## File Headers
+
+**Copyright/Attribution:**
+Files adapted from external sources include header:
+```python
+# Adapted from https://github.com/test-time-training/ttt-video-dit/...
+# Copyright 2025 test-time-training. All rights reserved.
+# Licensed under the MIT License
+```
+
+**Module docstrings:**
+All modules start with triple-quoted docstring explaining purpose and usage.
 
 ---
 
-*Convention analysis: 2026-02-03*
+*Convention analysis: 2026-02-06*

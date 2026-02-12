@@ -99,9 +99,21 @@ With both configs in training data, Rho/Tau have zero correlation with the valid
 - Sampling parameters per Qwen 3.0 thinking mode docs: Temperature=0.6, TopP=0.95, TopK=20, MinP=0
 - Dataset conversion to binary verification: must use ground truth labels from each dataset to construct True/False questions. CRITICAL: 50/50 True/False balance with plausible distractors to prevent sycophancy bias. "Is the answer X?" with X=correct 50% and X=plausible_distractor 50%. Distractors must be close perturbations (e.g., 100->98), not random numbers, so the model must actually verify. Without this balance, probes may learn "user suggestion" (sycophancy) rather than "verified truth" (reasoning).
 
+## Environment Setup
+
+Each user must create a `.env` file in the project root (already gitignored) with:
+```
+EXP_DIR="/mnt/data/<user>/logs/post-hoc-interp/"
+DATA_DIR="/mnt/data/<user>/data/"
+SLURM_PARTITION="high"
+```
+- `EXP_DIR`: Where SLURM job logs and experiment outputs are stored
+- `DATA_DIR`: User-specific data directory on the shared filesystem
+- `SLURM_PARTITION`: SLURM partition to submit jobs to
+
 ## Constraints
 
-- **Workspace**: All new code in `src/experimental/gorn/` -- shared repo with other researchers
+- **Workspace**: All new code in `src/infra/` (shared library) and `scripts/` (experiment scripts)
 - **GPU selection**: Must support specifying exact GPU IDs (e.g., GPUs 1 and 7) AND distributed data parallel across selected GPUs for throughput
 - **No mocks/fallbacks**: Every component must be real. Failures must propagate loudly with clear tracebacks
 - **No emoji**: Not in code, comments, print statements, or logs

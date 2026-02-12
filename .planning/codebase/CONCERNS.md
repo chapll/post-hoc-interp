@@ -1,180 +1,233 @@
 # Codebase Concerns
 
-**Analysis Date:** 2026-02-03
+**Analysis Date:** 2026-02-06
 
 ## Tech Debt
 
-**Unreachable Code in Mesh Initialization:**
-- Issue: Lines 81-83 in `src/infra/parallelisms.py` are unconditionally overwritten by lines 85-89, making the initial mesh/names assignment dead code.
-- Files: `src/infra/parallelisms.py` (lines 81-89)
-- Impact: Confusing logic flow. The `dp_sharding * dp_replicate * tp_sharding == 1` branch is never used, suggesting incomplete refactoring or copy-paste error from original source.
-- Fix approach: Remove the dead block (lines 81-83) or clarify intent if this is intentional fallback logic. Currently `get_world_mesh()` will crash if called with all factors = 1 because `mesh` and `names` are reset to empty lists.
+**Configuration Portability:**
+- Issue: Multiple configuration systems overlap (Hydra for training infra in `configs/`, OmegaConf for research pipelines in `src/experimental/gorn/configs/`). Environment variables via `.env` files are required but `.env` itself is gitignored, forcing each user to manually recreate from `.env.example`.
+- Files: `configs/config.yaml`, `configs/deploy/submitit_example.yaml`, `src/experimental/gorn/configs/base.yaml`, `.env.example`
+- Impact: New team members must manually configure paths before any code runs. Different users may have inconsistent configurations. Config drift between environments creates "works on my machine" bugs.
+- Fix approach: Add setup validation script that checks for `.env` file presence and required variables. Document minimum required env vars more prominently in README. Consider defaulting more values to reduce manual setup friction.
 
-**Silent Fallback in Checkpointing:**
-- Issue: `load_pretrained()` in `src/infra/checkpointer.py` (lines 55-61) silently catches `RuntimeError` and retries with a different state dict format instead of propagating the error.
-- Files: `src/infra/checkpointer.py` (lines 51-63)
-- Impact: Masks checkpoint loading failures. If the actual problem is incompatible checkpoint format or corrupted file, the user gets no diagnostic information. The retry may fail silently or with a different error further down the stack.
-- Fix approach: Log the original error before retry, or fail loudly if both attempts fail. Per CLAUDE.md strict rules, errors should fail loudly so they can be traced.
+**Hardcoded GPU Assumptions:**
+- Issue: Code requires CUDA with no CPU fallback (intentional per `src/experimental/gorn/lib/utils.py:43-46`). GPU count and availability checks exist but no graceful degradation for limited hardware.
+- Files: `src/experimental/gorn/lib/utils.py` (lines 31-53), `src/experimental/gorn/lib/model.py` (lines 40-49)
+- Impact: Users without GPUs cannot run validation or unit tests. Different GPU availability across team members (Ali: B200, Gorn: A100, Eric: limited) means code that works for Ali may OOM for Eric.
+- Fix approach: Add CPU-only unit tests for non-model logic (dataset loaders, storage, token parsing). Gate GPU-requiring tests with environment checks. Document minimum GPU requirements per operation (validation: 1x40GB, full trace gen: 4x80GB).
 
-**Missing Validation in Config:**
-- Issue: `config.py` has no defaults or validation for critical distributed training parameters (e.g., `parallelism.tp_sharding`, `parallelism.dp_sharding`, `parallelism.dp_replicate` default to 1, and there are no runtime checks that they compose correctly).
-- Files: `src/config.py` (lines 48-52)
-- Impact: Bad configurations can propagate to `get_world_mesh()` where assertions fail. Errors occur late in initialization rather than at config parse time.
-- Fix approach: Add runtime validation in config post-hook or in `apply_parallelisms()` before mesh creation.
+**Hardcoded Pacific Timezone:**
+- Issue: Logging timestamps hardcoded to "America/Los_Angeles" timezone in `src/infra/logging.py:21` and `src/infra/logging.py:117`.
+- Files: `src/infra/logging.py` (lines 21, 117)
+- Impact: Log timestamps may be confusing for team members in other timezones. Not critical but reduces usability for distributed teams.
+- Fix approach: Read timezone from environment variable with LA as default, or use UTC for all logs.
+
+**User-Specific Workspaces Are Stubs:**
+- Issue: `src/experimental/ali/` and `src/experimental/eric/` exist but contain only placeholder READMEs (ali/REAMDME.md is even misspelled). Only `src/experimental/gorn/` has actual implementation.
+- Files: `src/experimental/ali/REAMDME.md`, `src/experimental/eric/README.md`
+- Impact: Misleading directory structure suggests multi-user isolation that doesn't exist. If Ali or Eric add code to their directories, path assumptions in `sys.path.insert(0, "src/experimental/gorn")` may break.
+- Fix approach: Either populate all user directories with proper READMEs explaining ownership, or remove unused directories. Document that current work lives exclusively in `src/experimental/gorn/`.
+
+**Path Injection Pattern:**
+- Issue: Scripts use `sys.path.insert(0, "src/experimental/gorn")` to enable imports, but this only works if launched from repo root. Breaks if scripts are run from other directories or if package structure changes.
+- Files: `src/experimental/gorn/scripts/validate.py:28`, `src/experimental/gorn/scripts/generate_traces.py:28`, `src/experimental/gorn/scripts/capture_activations.py:28`
+- Impact: Scripts fail with confusing import errors if not run from correct directory. Fragile to repo refactoring.
+- Fix approach: Use proper Python package installation (`pip install -e .` or `uv pip install -e .`) and absolute imports. Remove path injection.
+
+**Seed 42 Prohibition:**
+- Issue: Code explicitly rejects seed value 42 with ValueError in `src/experimental/gorn/lib/utils.py:20-21`. No explanation in code or docs.
+- Files: `src/experimental/gorn/lib/utils.py` (lines 20-21)
+- Impact: Confusing error for users who habitually use seed=42. Appears to be an inside joke or arbitrary constraint.
+- Fix approach: Either remove the restriction or document the rationale. If it's for reproducibility testing (ensuring users changed defaults), explain in error message.
 
 ## Known Bugs
 
-**Timeout Threshold Calculation Off by 6 Minutes:**
-- Symptoms: When approaching timeout, the effective threshold calculation subtracts 6 extra minutes (`timedelta(minutes=6)`) in addition to average iteration time in `src/infra/train_iterator.py` line 134.
-- Files: `src/infra/train_iterator.py` (line 134)
-- Trigger: Any training run with `timeout_minutes` > 0 and sufficient iterations to calculate `avg_iter_time`.
-- Workaround: Adjust `timeout_minutes` config value to compensate (add 6 minutes to desired threshold), though this is fragile.
-- Note: Comment says "Timeout minutes - (average iteration time + 2 minutes)" but code subtracts 6 minutes, not 2. Off-by-four discrepancy.
+**Misspelled File:**
+- Symptoms: File named `REAMDME.md` instead of `README.md` in `src/experimental/ali/`
+- Files: `src/experimental/ali/REAMDME.md`
+- Trigger: Always present
+- Workaround: None needed, file is just a placeholder stub
 
-**Distributed Barrier Always Uses Current Device:**
-- Symptoms: `end_distributed()` in `src/infra/parallelisms.py` line 45 calls `torch.distributed.barrier(device_ids=[torch.cuda.current_device()])` which may fail or hang if device is not properly set on all ranks.
-- Files: `src/infra/parallelisms.py` (line 45)
-- Trigger: Multi-node training where `LOCAL_RANK` environment variable is not properly set before `init_distributed()` or if CUDA devices are not synchronized across ranks.
-- Workaround: Ensure `init_distributed()` is always called before `end_distributed()`.
-
-**Checkpoint Step Parsing Assumes Single Dash:**
-- Symptoms: `get_latest_checkpoint_step()` in `src/infra/logging.py` line 174 splits on "-" and takes index [1], but checkpoint dir name format is strictly enforced as "step-{step}".
-- Files: `src/infra/logging.py` (lines 169-175)
-- Trigger: If checkpoint directories are manually created with different naming scheme (e.g., "step-0-backup"), parsing will fail with `IndexError` or return wrong step number.
-- Workaround: Follow strict naming convention "step-{number}" when creating checkpoints manually.
+**Missing .env File Fails Silently:**
+- Symptoms: Config system falls back to defaults (`./exp`, `./data`) if `.env` file is missing. Scripts proceed but write to wrong locations or fail with permission errors.
+- Files: `configs/config.yaml` (lines 12-14)
+- Trigger: Running any script without creating `.env` file first
+- Workaround: Copy `.env.example` to `.env` as documented in README
 
 ## Security Considerations
 
-**Insecure Pickle Loading:**
-- Risk: `torch.load()` in `src/infra/logging.py` line 161 loads untrusted checkpoint files without validation. Pickle protocol can execute arbitrary code.
-- Files: `src/infra/logging.py` (line 161)
-- Current mitigation: Relies on filesystem permissions and trusted checkpoint sources.
-- Recommendations: Use `torch.load(..., weights_only=True)` when loading distributed checkpoints to restrict to tensor data only. For metadata, use `torch.load(..., map_location=...)` with explicit device handling. Document that checkpoints should only be loaded from trusted sources.
+**Environment File Contains Paths Only:**
+- Risk: `.env.example` shows structure but actual `.env` is gitignored. Low security risk since it only contains paths and Slurm account names, not API keys or credentials.
+- Files: `.env.example`, `.gitignore` (line 142)
+- Current mitigation: `.env` is in `.gitignore`. No sensitive credentials detected in codebase.
+- Recommendations: Document that `.env` should never contain API keys or tokens. If WandB API keys are added later, use separate secrets management.
 
-**WandB API Key Exposure:**
-- Risk: WandB run ID and metadata stored in checkpoint metadata state dict may expose project/entity information in logs or shared checkpoints.
-- Files: `src/infra/checkpointer.py` (line 41), `src/infra/logging.py` (lines 49-83)
-- Current mitigation: Metadata stored locally, WandB API communication uses environment credentials.
-- Recommendations: Document that checkpoint directories should not be shared without considering privacy implications. Consider encrypting metadata in checkpoints if sharing across teams.
+**Submitit Config Files Are Gitignored:**
+- Risk: Personal Slurm configs (`configs/deploy/submitit_*.yaml`) are gitignored except the example. Could contain Slurm account names or partition names that reveal cluster infrastructure.
+- Files: `.gitignore` (lines 217-218), `configs/deploy/submitit_example.yaml`
+- Current mitigation: Pattern-based gitignore prevents accidental commits of personal configs.
+- Recommendations: Current approach is reasonable. Ensure documentation emphasizes not to commit personal Slurm configs with hardcoded paths.
 
 ## Performance Bottlenecks
 
-**No Async Checkpoint Saving:**
-- Problem: Checkpoint save in `src/infra/train_iterator.py` line 191 is blocking. On distributed training, all ranks pause while rank 0 writes to disk, causing synchronization overhead.
-- Files: `src/infra/train_iterator.py` (lines 185-192)
-- Cause: Uses synchronous `torch.distributed.checkpoint.save()` with no background threading.
-- Improvement path: Use async checkpointing with background thread, or use distributed checkpoint's built-in async support if available. Coordinate with timeout checkpoint logic to avoid early termination during async save.
+**OOM on Long Traces:**
+- Problem: Full 10-layer residual stream capture of 3500+ token sequences exhausts 80GB on A100. Documented in `.planning/STATE.md:84` and multiple planning docs.
+- Files: `src/experimental/gorn/lib/model.py`, activation capture logic
+- Cause: Saving all 36 layers of activations for long sequences keeps tensors in GPU memory until trace context exits.
+- Improvement path: Current mitigation uses chunked capture (12 layers per pass, 3 passes). Alternative: immediately offload to CPU with `.cpu()` after each layer, or use selective layer saving (configurable layer subset).
 
-**GarbageCollection Disabled by Default:**
-- Problem: `GarbageCollection` class in `src/infra/utils.py` disables Python GC entirely (line 53) and only re-enables it at `gc_freq` intervals.
-- Files: `src/infra/utils.py` (lines 49-58)
-- Cause: Comment says "avoid stragglers in garbage collection" but implementation is fragile. If step count never triggers `gc_freq` boundary (e.g., training crashes at step 51 when `gc_freq=100`), GC never runs again.
-- Improvement path: Use `gc.set_threshold()` instead of `gc.disable()` to reduce collection frequency without disabling entirely. Add cleanup in `__del__` or exception handlers to ensure GC is re-enabled on exit.
+**Sequential Trace Processing:**
+- Problem: Each worker processes traces sequentially (batch_size=1) per `src/experimental/gorn/scripts/generate_traces.py` logic. Cannot batch multiple problems due to variable generation lengths.
+- Files: `src/experimental/gorn/scripts/generate_traces.py` (lines 86-179)
+- Cause: Thinking-mode generation produces variable-length outputs (100-3500+ tokens). Batching would require padding to max length, wasting compute.
+- Improvement path: Current approach (multi-GPU parallelism with one model per GPU) is appropriate for variable-length generation. No obvious optimization without compromising memory or correctness.
 
-**MultiLogger Disk I/O on Every Step:**
-- Problem: `logger.write()` calls `flush()` immediately in `src/infra/logging.py` line 112 for every progress message. On distributed training with NFS, this causes synchronization overhead.
-- Files: `src/infra/logging.py` (lines 106-112)
-- Cause: Unbuffered write to maintain up-to-date log file, but causes I/O contention.
-- Improvement path: Use buffered writes with periodic flush (e.g., every 10 steps) for progress messages. Keep unbuffered writes only for critical events (checkpoints, errors). Use `fcntl.lockf()` to avoid file corruption in multi-process scenarios.
-
-**WandB Logs Every Reduced Stat:**
-- Problem: In `src/infra/logging.py` line 146, `get_last_values(stats)` is called for every step in `save_multi()`, which logs to WandB even if stats haven't changed significantly.
-- Files: `src/infra/logging.py` (lines 140-151)
-- Cause: No batching or filtering of metrics before logging. On experiments with many custom metrics, this causes API overhead.
-- Improvement path: Only log on configurable interval (e.g., every 10 steps) or implement delta-based logging to reduce API calls.
+**Verification Scripts Are 600-900 Lines:**
+- Problem: `verify_phase2.py` (902 lines) and `validate.py` (690 lines) are large monolithic scripts that perform many checks sequentially. Long runtime for full verification.
+- Files: `src/experimental/gorn/scripts/verify_phase2.py`, `src/experimental/gorn/scripts/validate.py`
+- Cause: Comprehensive validation across multiple dimensions (completeness, metadata, think boundaries, contamination, seeds, quality, activations, disk usage). Each check reads many files from disk.
+- Improvement path: Verification is inherently I/O-bound (reading thousands of trace files). Could parallelize by partitioning checks across multiple processes, but added complexity may not be worth speedup for occasional validation runs.
 
 ## Fragile Areas
 
-**TrainingIterator __del__ Cleanup:**
-- Files: `src/infra/train_iterator.py` (lines 181-183)
-- Why fragile: `__del__()` calls `self.logger.close()` but if logger is None or already closed, will crash. In Python, `__del__` order is unpredictable in distributed settings.
-- Safe modification: Move cleanup to explicit context manager (`__enter__`/`__exit__`) instead of `__del__`. Use try-finally blocks to ensure cleanup on exit.
-- Test coverage: No unit tests for cleanup logic. Missing tests for exception handling during checkpoint/resume.
+**Multi-GPU Process Spawning:**
+- Files: `src/experimental/gorn/lib/multiprocess.py` (lines 200-304)
+- Why fragile: Depends on `mp.get_context("spawn")` for CUDA compatibility (line 263). Uses independent processes with manual error collection. If one worker crashes, others continue but failure detection relies on exit codes.
+- Safe modification: Always test multi-GPU code paths with deliberate worker failures. Add integration tests that inject errors and verify proper error propagation. Never modify spawn context to "fork" on Linux with CUDA.
+- Test coverage: Validated in Phase 1 per `01-VERIFICATION.md` but no automated regression tests.
 
-**Timeout Logic with Distributed Synchronization:**
-- Files: `src/infra/train_iterator.py` (lines 120-148)
-- Why fragile: Timeout detection uses `torch.distributed.all_reduce()` which blocks. If one rank detects timeout but others don't, can cause hangs or divergence in training state. The `timeout_checkpoint` flag is process-local and not synchronized.
-- Safe modification: Use collective timeout detection with coordination. Document that timeout should be set conservatively to avoid stragglers.
-- Test coverage: No tests for timeout edge cases (e.g., timeout exactly at step boundary, timeout during checkpoint).
+**Think Token Boundary Parsing:**
+- Files: `src/experimental/gorn/lib/tokens.py` (lines 1-125)
+- Why fragile: Depends on hardcoded token IDs (151667 for `<think>`, 151668 for `</think>`). Assumes single contiguous think block per trace for primary analysis. Multi-block handling requires fallback logic.
+- Safe modification: Always validate token IDs against tokenizer before deployment. Add tests for edge cases (empty think blocks, nested markers, truncated generation). Verify token IDs match Qwen3-8B tokenizer version.
+- Test coverage: Token parsing validated extensively in Phase 1, but token ID changes in future Qwen models would break silently.
 
-**Distributed Checkpoint State Dict Structure:**
-- Files: `src/infra/checkpointer.py` (lines 65-95)
-- Why fragile: Load expects specific keys (`MODEL_STATE_DICT_KEY`, `OPTIMIZER_STATE_DICT_KEY`, etc.) but if checkpoint is from different version of code with renamed/removed keys, loading silently skips them or crashes on `KeyError`.
-- Safe modification: Add version stamps to checkpoint metadata. Implement migration logic for checkpoint format changes. Validate all expected keys exist before loading.
-- Test coverage: No regression tests for checkpoint compatibility across code versions.
+**nnsight Layer Access Pattern:**
+- Files: `src/experimental/gorn/lib/model.py` (lines 130-180)
+- Why fragile: Uses `.output` (not `.output[0]`) to get layer activations with shape `[batch, seq_len, hidden]`. Documented in `STATE.md:58` as critical decision. Alternative access patterns produce wrong shapes.
+- Safe modification: Never change layer access pattern without validating tensor shapes. Add assertion checks for expected shapes immediately after capture. Document that nnsight API may differ across versions.
+- Test coverage: Validated in Phase 1, but brittle to nnsight version updates.
 
-**Config Resolution Order with Overrides:**
-- Files: `src/config.py`, `src/train.py` (line 75)
-- Why fragile: Hydra config resolution happens before any validation. If user provides conflicting overrides (e.g., `tp_sharding=4 dp_sharding=2 dp_replicate=3` but only 16 GPUs available), error occurs late in `get_world_mesh()` with obscure assertion message.
-- Safe modification: Add pre-flight validation in `main()` before calling distributed initialization. Check world size divisibility early.
-- Test coverage: No integration tests with Hydra config overrides.
+**BF16 Numerical Stability:**
+- Files: `src/experimental/gorn/lib/storage.py` (lines 100-150), entropy computation
+- Why fragile: Softmax computed in FP32 then cast to BF16 for numerical stability per `STATE.md:52`. Direct BF16 softmax causes numerical errors in entropy calculation.
+- Safe modification: Never remove FP32 cast in entropy/softmax computation. Add unit tests comparing FP32 vs BF16 entropy for known distributions. Document precision requirements.
+- Test coverage: Validated during Phase 1 but no automated precision tests.
 
 ## Scaling Limits
 
-**Single Rank Logging Bottleneck:**
-- Current capacity: Supports arbitrary number of ranks, but all non-rank-0 processes are silent.
-- Limit: On very large runs (100+ nodes), rank 0 becomes bottleneck for logging and checkpointing coordination. No parallel I/O.
-- Scaling path: Implement hierarchical logging where subset of ranks (e.g., one per node) write locally, then aggregate. Use `torch.distributed.all_gather()` for stats collection instead of centralizing on rank 0.
+**Disk Storage at Scale:**
+- Current capacity: Estimated 1-2 TB for full dataset (2000 traces × 36 layers × safetensors format). Documented concern in `STATE.md:85`.
+- Limit: Depends on cluster storage quota per user. Not documented.
+- Scaling path: Use selective layer saving (only layers 0,4,8,12,16,20,24,28,32,35 per config). Compress old traces after analysis. Store only final results for paper. Add disk quota checks to scripts before starting large jobs.
 
-**Checkpoint Storage Proliferation:**
-- Current capacity: Each checkpoint interval creates full state dict copy (model + optimizer + scheduler + data module state).
-- Limit: On large models (billions of parameters) with frequent checkpoints, disk usage grows unbounded. No automatic cleanup of old checkpoints.
-- Scaling path: Implement checkpoint cleanup policy (keep last N checkpoints, or delete older than X days). Use incremental/delta checkpointing. Add storage quota enforcement.
+**4-GPU Parallelism Ceiling:**
+- Current capacity: Pipeline designed for 4 GPUs (Ali's config, Gorn's A100s). Validated at 4 GPU scale in Phase 1.
+- Limit: Linear scaling up to GPU count, but no tested path beyond 8 GPUs. Multi-node not implemented.
+- Scaling path: Current data-parallel approach (independent model copies) scales to arbitrary GPU count within single node. Multi-node would require job scheduling changes and shared storage validation.
 
-**Distributed Communication Overhead:**
-- Current capacity: Tensor parallelism and FSDP introduce all-reduce/all-gather collectives. With poor bandwidth (e.g., multi-node over Ethernet), scaling is limited.
-- Limit: Tensor parallelism is only validated for `tp_sharding` but no mechanism to detect/warn about network bottlenecks.
-- Scaling path: Add communication profile logging (track collective latencies). Provide diagnostics for slow collectives. Implement communication-avoiding algorithms where possible.
+**RAM for Dataset Loading:**
+- Current capacity: Three datasets (GSM-Symbolic, FOLIO, StrategyQA) loaded into memory per `src/experimental/gorn/lib/datasets.py`. Small datasets (300 problems each × 2 configs = 1200 items total).
+- Limit: Dataset loading is not a bottleneck at current scale. Could become issue if expanding to full GSM-Symbolic (11.5K problems) or adding more datasets.
+- Scaling path: Use HuggingFace datasets streaming mode or lazy loading if memory becomes constraint.
 
 ## Dependencies at Risk
 
-**PyTorch 2.9.0 with Torch Distributed Checkpoint:**
-- Risk: Project pins `torch==2.9.0` exactly in `pyproject.toml` line 16. Distributed checkpoint API is relatively new and may have stability issues. Comments in `src/infra/parallelisms.py` lines 120-131 explicitly note "all-reduce has caused training divergences on torch==2.6.0", suggesting prior version issues.
-- Impact: Upgrades to PyTorch 2.10+ may break distributed checkpointing API or introduce new numerical instability. Downgrades lock out security fixes.
-- Migration plan: Monitor PyTorch releases for stable distributed checkpoint support. Create integration tests for each PyTorch version to validate checkpoint round-trip and numerical stability. Pin to version range (e.g., `torch>=2.9,<3.0`) instead of exact version once confidence is established.
+**nnsight Version Sensitivity:**
+- Risk: nnsight 0.5.15 is specified in `pyproject.toml:13`. Library is under active development. API changes in future versions could break layer access patterns or trace generation.
+- Impact: Activation capture would fail with shape mismatches or attribute errors.
+- Migration plan: Pin nnsight version strictly. Test against new versions in isolated environment before upgrading. Have fallback to direct HuggingFace hooks if nnsight becomes unmaintained.
 
-**Hydra Framework Stability:**
-- Risk: Uses `hydra-core>=1.3.2` and `hydra-submitit-launcher>=1.2.0` with version constraints. Hydra has had breaking changes between minor versions.
-- Impact: Config format or launcher API changes can break deployment pipeline. No version lock for launcher.
-- Migration plan: Pin launcher version when known to be stable with core. Add integration test that validates Hydra config resolution and Submitit job submission.
+**PyTorch 2.9.0 Pinned:**
+- Risk: `pyproject.toml:20` pins torch==2.9.0 exactly. Strict pin prevents security patches and may conflict with other dependencies that require newer PyTorch.
+- Impact: Cannot use newer PyTorch features or bug fixes without testing full pipeline compatibility.
+- Migration plan: Current pin is intentional for reproducibility. Document upgrade testing protocol: validate model loading, generation, activation capture, and BF16 behavior on new versions before updating pin.
 
-**WandB API Coupling:**
-- Risk: Tight coupling to WandB in `src/infra/logging.py` with hard-coded project/entity in `src/config.py` line 41-42. If WandB becomes unavailable or changes API, training cannot proceed (unless disabled via config).
-- Impact: Network outage or service degradation can block training. No graceful degradation.
-- Migration plan: Make WandB optional with better fallback logging. Decouple project/entity from config schema to environment variables only. Add retry logic with exponential backoff for WandB operations.
+**Python 3.13 Requirement:**
+- Risk: `pyproject.toml:6` requires Python >=3.13. Very recent Python version (released Oct 2024). Some HPC clusters may not have 3.13 available yet.
+- Impact: Eric or new team members on older clusters may not be able to run code without building Python from source.
+- Migration plan: Test compatibility with Python 3.11+ and relax requirement if possible. If 3.13-specific features are used, document them and assess whether they're necessary.
+
+## Missing Critical Features
+
+**No Automated Tests:**
+- Problem: No test files detected (no `test_*.py` or `*_test.py` files in experimental code). Only validation scripts that require full GPU setup.
+- Blocks: Regression detection, refactoring safety, CI/CD integration
+- Priority: High - Makes codebase fragile to changes and hard to validate incrementally.
+
+**No Setup Validation:**
+- Problem: No script to verify environment setup (GPU availability, required env vars, dependency versions, disk quota).
+- Blocks: New user onboarding, detecting environment issues before long-running jobs fail
+- Priority: Medium - Would significantly improve multi-user experience.
+
+**No Compute Environment Documentation:**
+- Problem: GPU requirements documented in planning docs but not in user-facing README. Different hardware available per user (Ali: B200, Gorn: A100, Eric: limited) not captured in setup docs.
+- Blocks: Setting realistic expectations for new users, job sizing decisions
+- Priority: Medium - Critical for onboarding but low urgency for current 3-person team.
+
+**No Path Portability Between Users:**
+- Problem: Data paths in `src/experimental/gorn/configs/base.yaml:30-31` are relative to repo root (`src/experimental/gorn/data`). Works if all users structure identically, but `.env` approach suggests per-user paths should be supported.
+- Blocks: Users cannot easily point to different data locations without editing configs
+- Priority: Low - Current team uses consistent structure, but limits flexibility.
 
 ## Test Coverage Gaps
 
-**No Unit Tests:**
-- What's not tested: All infrastructure modules (`train_iterator.py`, `checkpointer.py`, `logging.py`, `parallelisms.py`, `optimizers.py`) lack any unit tests.
-- Files: `src/infra/*.py` (all files)
-- Risk: Regressions in checkpoint loading, timeout detection, or distributed initialization are caught only in end-to-end training, which is slow and expensive.
-- Priority: High - Distributed training is error-prone and should have isolated unit tests.
+**Dataset Loaders Not Unit Tested:**
+- What's not tested: `src/experimental/gorn/lib/datasets.py` (504 lines) has no unit tests. Balance checking, distractor generation, and dataset-specific parsing only validated by full pipeline runs.
+- Files: `src/experimental/gorn/lib/datasets.py`
+- Risk: Bugs in distractor generation or label balance could silently corrupt training data for probes. Dataset loading errors only caught after expensive trace generation completes.
+- Priority: High - Data correctness is critical for research validity.
 
-**No Distributed Training Integration Tests:**
-- What's not tested: Multi-GPU and multi-node training scenarios are never validated. Only single-GPU runs can be tested locally.
-- Files: All files that use `torch.distributed`
-- Risk: Deadlocks, collective synchronization bugs, and rank-mismatched state appear only in production multi-GPU runs. Cannot validate scaling or detect bottlenecks.
-- Priority: High - Distributed mode is critical path and has different code paths than single-GPU.
+**Multiprocessing Error Handling Not Tested:**
+- What's not tested: Isolated worker failure modes in `run_parallel_isolated` (`src/experimental/gorn/lib/multiprocess.py:200-304`). Exit code propagation and partial success handling not validated with injected errors.
+- Files: `src/experimental/gorn/lib/multiprocess.py`
+- Risk: Worker crashes might not be detected correctly. Failed traces could be silently missed in large-scale runs.
+- Priority: Medium - Manual validation in Phase 1 but no automated regression tests.
 
-**No Checkpoint Compatibility Tests:**
-- What's not tested: Checkpoint save/load round-trip, resumption from checkpoints, compatibility across code versions.
-- Files: `src/infra/checkpointer.py`, `src/infra/train_iterator.py` (resume logic)
-- Risk: Silent state corruption during checkpoint load. Resume from checkpoint may train from wrong state without error.
-- Priority: High - Checkpoint correctness is critical for long training runs.
+**Storage Format Edge Cases Not Tested:**
+- What's not tested: Safetensors save/load with edge cases (empty traces, NaN values, mismatched dtypes). Only validated with successful generation runs.
+- Files: `src/experimental/gorn/lib/storage.py`
+- Risk: Corrupted traces might not be detected until analysis phase. Loading failures could be confusing.
+- Priority: Low - Format is robust and validated at scale, but automated tests would catch regressions.
 
-**No Config Override Tests:**
-- What's not tested: Hydra config composition, CLI overrides, experiment presets.
-- Files: `configs/` directory, `src/train.py` (Hydra main)
-- Risk: User config mistakes (incompatible parallelism settings, missing required fields) are caught only at runtime with cryptic Hydra errors.
-- Priority: Medium - Can be caught earlier with proper validation.
+**Config Override System Not Tested:**
+- What's not tested: OmegaConf config loading with CLI overrides (`src/experimental/gorn/lib/config.py`). Validation script tests successful cases but not malformed inputs or conflicting overrides.
+- Files: `src/experimental/gorn/lib/config.py`
+- Risk: Bad config overrides could cause jobs to run with wrong parameters.
+- Priority: Low - Config errors are usually caught early, but better error messages would help.
 
-**No Edge Case Tests:**
-- What's not tested: Timeout edge cases, very small batch sizes, 0 warmup steps, extreme learning rates, checkpoint interval = 0, resume from step -1 (auto-detect).
-- Files: Multiple files
-- Risk: Edge cases cause silent failures or numerical issues that only appear in specific configurations.
-- Priority: Medium - Edge cases are common in research experiments.
+## Multi-User Friction Points
+
+**No .env File by Default:**
+- Problem: Every new team member must manually create `.env` from `.env.example`. Easy to forget or misconfigure. Failure mode is confusing (scripts use wrong paths).
+- Friction: High for first-time setup, zero after initial config
+- Recommendation: Add check in main scripts that errors clearly if `.env` is missing. Consider setup wizard script.
+
+**GPU Assignment Requires Manual Coordination:**
+- Problem: Scripts take `--gpus` flag or read from config, but no mechanism to detect which GPUs are available or in-use by other users. Ali on B200, Gorn on A100, Eric on limited compute must manually coordinate to avoid collisions.
+- Friction: Medium - Requires Slack/manual coordination before launching jobs
+- Recommendation: Add GPU utilization check (via `nvidia-smi`) with warning if requested GPUs are >50% utilized. Document GPU ownership/reservation protocol.
+
+**Data Directory Isolation Unclear:**
+- Problem: `data_dir` in `.env` can be per-user or shared. No documentation on which approach is intended. Shared data saves space, per-user data prevents collisions but wastes disk.
+- Friction: Medium - Team must decide convention and communicate it out-of-band
+- Recommendation: Document recommended data organization strategy. Add example for shared data setup with user-specific output subdirectories.
+
+**Planning Docs Tracked in Git:**
+- Problem: `.planning/` directory is committed to git (line 224 in `.gitignore` is commented out). Contains user-specific execution state (`STATE.md`), session notes, and temporary planning artifacts. Multiple users pushing to same branch could create conflicts.
+- Friction: Low currently (single-user workflow), High if team parallelizes work
+- Recommendation: Decide if planning docs should be gitignored or treated as shared docs. If shared, establish protocol for STATE.md updates (e.g., per-user state files).
+
+**No Shared Result Repository:**
+- Problem: Each user's trace outputs go to their own `data_dir`. No established protocol for sharing generated traces across team. If Eric wants to analyze traces Ali generated, must coordinate manual file transfer.
+- Friction: Medium - Limits collaboration and wastes compute duplicating trace generation
+- Recommendation: Document shared data organization strategy. Consider rsync scripts or shared cluster storage with appropriate permissions.
+
+**Config Templates Don't Cover All Hardware:**
+- Problem: Example configs show 8-GPU setup (`configs/deploy/submitit_example.yaml:28`), but Eric has limited compute. No example config for small-scale runs (1-2 GPUs).
+- Friction: Medium - Users without full resources must figure out correct settings by trial-and-error
+- Recommendation: Add example configs for common hardware profiles (1-GPU laptop, 2-GPU workstation, 4-GPU cluster, 8-GPU HPC). Document memory requirements per setup.
 
 ---
 
-*Concerns audit: 2026-02-03*
+*Concerns audit: 2026-02-06*

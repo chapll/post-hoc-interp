@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-04)
 
 **Core value:** Identify the exact internal transition point where Qwen3-8B shifts from "searching" to "knowing" the answer, and provide mechanistic causal evidence that post-transition tokens are performative.
-**Current focus:** Phase 2.6 complete (swapped-label protocol). Ready for full-scale generation, then Phase 3.
+**Current focus:** Phase 2.1 complete (repo restructure and shared infra stabilization). All 3 plans done. Ready for Phase 3.
 
 ## Current Position
 
-Phase: 2 of 6 (Trace Generation at Scale) -- COMPLETE
-Plan: 6 of 6 (swapped-label prompt protocol)
-Status: Complete (pipeline validated with swapped-label protocol, ready for full-scale execution)
-Last activity: 2026-02-05 -- Completed 02-06-PLAN.md (swapped-label protocol)
+Phase: 2.1 of 6 (Repo Restructure and Shared Infra Stabilization)
+Plan: 3 of 3 (smoke test and Tier 1 unit tests)
+Status: Phase complete
+Last activity: 2026-02-06 -- Completed 02.1-03-PLAN.md (smoke test and Tier 1 unit tests)
 
-Progress: [######....] ~33%
+Progress: [#########.] ~45%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 12
-- Average duration: 6min
-- Total execution time: ~1.3 hours
+- Total plans completed: 15
+- Average duration: 5min
+- Total execution time: ~1.55 hours
 
 **By Phase:**
 
@@ -29,10 +29,11 @@ Progress: [######....] ~33%
 |-------|-------|-------|----------|--------|
 | 01-foundation | 6/6 | 48min | 8min | Complete |
 | 02-trace-generation-at-scale | 6/6 | 31min | 5min | Complete |
+| 02.1-repo-restructure | 3/3 | 12min | 4min | Complete |
 
 **Recent Trend:**
-- Last 5 plans: 02-02 (2min), 02-03 (2min), 02-04 (3min), 02-05 (5min), 02-06 (15min)
-- Trend: Steady, 02-06 was larger scope (swapped-label protocol)
+- Last 5 plans: 02-05 (5min), 02-06 (15min), 02.1-01 (3min), 02.1-02 (3min), 02.1-03 (6min)
+- Trend: Steady, test writing slightly slower than mechanical restructure tasks
 
 *Updated after each plan completion*
 
@@ -72,12 +73,20 @@ Recent decisions affecting current work:
 - Directory scanning over manifest for trace discovery
 - **mp.get_context("spawn") required for CUDA-compatible multiprocessing on Linux**
 - **Swapped Rho/Tau labels to eliminate Yes/No probe confound** -- each problem expands to A/B config variants
+- Removed dead .gitignore entries for old Hydra configs/deploy/ patterns during restructure
+- **_find_project_root() walks up to pyproject.toml for config path resolution** (robust to future moves)
+- **pytest added as dev optional dependency (not main) to keep production env lean**
+
+### Roadmap Evolution
+
+- Phase 2.1 inserted after Phase 2: Repo restructure and shared infra stabilization (INSERTED) -- promote experimental/gorn/ to main repo, eliminate experimental dirs, validate stability
 
 ### Pending Todos
 
 - Delete old test data in data/traces/ before full-scale run (old Yes/No prompts)
 - Run full-scale trace generation on 4 GPUs with swapped-label protocol (~400 problems x 2 configs x 3 traces = ~2400 traces)
 - Run full-scale activation capture after generation completes
+- GPU integration smoke test (manual): generate traces + capture activations on single GPU to validate pipeline end-to-end
 
 ### Blockers/Concerns
 
@@ -87,6 +96,6 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-02-05
-Stopped at: Phase 2 complete. All 6 plans executed. Pipeline validated with swapped-label protocol. Ready for full-scale execution.
+Last session: 2026-02-06
+Stopped at: Completed 02.1-03-PLAN.md (smoke test and Tier 1 unit tests). Phase 2.1 complete. Next: Phase 3 (Activation Capture).
 Resume file: None
