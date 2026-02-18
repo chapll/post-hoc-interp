@@ -5,8 +5,8 @@ and token IDs with companion JSON metadata files. All tensor dtypes are
 enforced on save to ensure consistent storage format.
 
 Also provides path helpers for the decoupled trace/activation directory layout:
-- Traces (JSON): data/traces/{valid,failed}/{dataset}/{problem_id}/trace_NN.json
-- Activations (safetensors): data/activations/{dataset}/{problem_id}/trace_NN.safetensors
+- Traces (JSON): {traces_dir}/{valid,failed}/{dataset}/{problem_id}/trace_NN.json
+- Activations (safetensors): {activations_dir}/{dataset}/{problem_id}/trace_NN.safetensors
 """
 
 import hashlib

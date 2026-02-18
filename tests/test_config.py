@@ -23,7 +23,8 @@ def test_load_base_config_returns_dictconfig():
 
 
 def test_load_base_config_has_paths():
-    """base.yaml must contain paths.data_dir == 'data' after Plan 02 path updates."""
+    """base.yaml resolves paths.data_dir from DATA_DIR env var, falling back to 'data'."""
+    os.environ.pop("DATA_DIR", None)
     cfg = load_config(script_config="")
     assert cfg.paths.data_dir == "data"
     assert cfg.paths.experiments_dir == "experiments"
@@ -44,6 +45,7 @@ def test_load_base_config_has_seed():
 
 def test_load_with_script_config_merges():
     """Merging generate.yaml over base.yaml should add generation-specific keys."""
+    os.environ.pop("DATA_DIR", None)
     cfg = load_config(script_config="configs/generate.yaml")
     assert isinstance(cfg, DictConfig)
     # generate.yaml sets paths.traces_dir
@@ -53,8 +55,20 @@ def test_load_with_script_config_merges():
 
 
 def test_load_config_nonexistent_script_config():
-    """Non-existent script_config path should still return base config (os.path.isfile check)."""
+    """Non-existent script_config path should still return base config."""
+    os.environ.pop("DATA_DIR", None)
     cfg = load_config(script_config="/nonexistent/path.yaml")
     assert isinstance(cfg, DictConfig)
     # Should have base config values since the file doesn't exist
     assert cfg.paths.data_dir == "data"
+
+
+def test_data_dir_env_override():
+    """Setting DATA_DIR env var overrides paths.data_dir and derived paths."""
+    os.environ["DATA_DIR"] = "/tmp/test-data"
+    try:
+        cfg = load_config(script_config="configs/generate.yaml")
+        assert cfg.paths.data_dir == "/tmp/test-data"
+        assert cfg.paths.traces_dir == "/tmp/test-data/traces"
+    finally:
+        os.environ.pop("DATA_DIR", None)
