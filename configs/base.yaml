@@ -27,5 +27,5 @@ gpus: [0]
 seed: 137
 
 paths:
-  data_dir: "data"
+  data_dir: "${oc.env:DATA_DIR,data}"
   experiments_dir: "experiments"

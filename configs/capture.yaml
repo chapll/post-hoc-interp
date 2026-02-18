@@ -10,5 +10,5 @@ capture:
   logits_atol: 0.01
 
 paths:
-  traces_dir: "data/traces"
-  activations_dir: "data/activations"
+  traces_dir: "${paths.data_dir}/traces"
+  activations_dir: "${paths.data_dir}/activations"

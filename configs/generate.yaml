@@ -19,4 +19,4 @@ data:
   strategyqa_problems: 100
 
 paths:
-  traces_dir: "data/traces"
+  traces_dir: "${paths.data_dir}/traces"
