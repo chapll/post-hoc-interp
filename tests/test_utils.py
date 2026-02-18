@@ -1,4 +1,4 @@
-"""Tests for src.infra.utils.
+"""Tests for src.utils.
 
 Tested functions:
     set_seed(seed: int) -> None  -- raises ValueError if seed == 42
@@ -11,7 +11,7 @@ import logging
 
 import pytest
 
-from src.infra.utils import set_seed, setup_logging
+from src.utils import set_seed, setup_logging
 
 
 class TestSetSeed:

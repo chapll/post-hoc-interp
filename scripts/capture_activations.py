@@ -24,11 +24,11 @@ import time
 import torch
 
 # -- project imports ----------------------------------------------------------
-from src.infra.config import load_config
-from src.infra.model import NUM_LAYERS, load_model
-from src.infra.multiprocess import run_parallel_isolated
-from src.infra.storage import get_activation_path, save_metadata, save_trace
-from src.infra.utils import setup_logging
+from src.config import load_config
+from src.model import NUM_LAYERS, load_model
+from src.multiprocess import run_parallel_isolated
+from src.storage import get_activation_path, save_metadata, save_trace
+from src.utils import setup_logging
 
 logger = logging.getLogger(__name__)
 

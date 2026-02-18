@@ -24,23 +24,23 @@ import time
 import torch
 
 # -- project imports ----------------------------------------------------------
-from src.infra.config import load_config
-from src.infra.datasets import (
+from src.config import load_config
+from src.datasets import (
     load_folio,
     load_gsm_symbolic_contamination,
     load_strategyqa,
 )
-from src.infra.model import generate_trace, load_model
-from src.infra.multiprocess import run_parallel_isolated
-from src.infra.prompts import build_verification_prompt
-from src.infra.storage import (
+from src.model import generate_trace, load_model
+from src.multiprocess import run_parallel_isolated
+from src.prompts import build_verification_prompt
+from src.storage import (
     derive_trace_seed,
     get_failed_trace_json_path,
     get_trace_json_path,
     write_trace_json,
 )
-from src.infra.tokens import parse_think_boundaries
-from src.infra.utils import set_seed, setup_logging
+from src.tokens import parse_think_boundaries
+from src.utils import set_seed, setup_logging
 
 logger = logging.getLogger(__name__)
 

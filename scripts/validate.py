@@ -25,18 +25,18 @@ import tempfile
 import torch
 
 # -- project imports ----------------------------------------------------------
-from src.infra.config import load_config
-from src.infra.datasets import load_dataset_by_name
-from src.infra.prompts import build_verification_prompt
-from src.infra.model import (
+from src.config import load_config
+from src.datasets import load_dataset_by_name
+from src.prompts import build_verification_prompt
+from src.model import (
     HIDDEN_DIM,
     NUM_LAYERS,
     capture_activations,
     generate_trace,
     load_model,
 )
-from src.infra.multiprocess import run_parallel
-from src.infra.storage import (
+from src.multiprocess import run_parallel
+from src.storage import (
     get_metadata_path,
     get_trace_path,
     load_metadata,
@@ -44,13 +44,13 @@ from src.infra.storage import (
     prepare_trace_tensors,
     save_trace,
 )
-from src.infra.tokens import (
+from src.tokens import (
     count_think_blocks,
     get_pre_handoff_window,
     get_think_content_mask,
     parse_think_boundaries,
 )
-from src.infra.utils import set_seed, setup_logging
+from src.utils import set_seed, setup_logging
 
 # -- globals ------------------------------------------------------------------
 
@@ -473,12 +473,12 @@ def _multi_gpu_worker(rank, gpu_id, items, cfg):
 
     Loads model on assigned GPU, generates one trace per item, saves to disk.
     """
-    from src.infra.model import capture_activations as _capture
-    from src.infra.model import generate_trace as _gen
-    from src.infra.model import load_model as _load
-    from src.infra.storage import prepare_trace_tensors as _prepare
-    from src.infra.storage import save_trace as _save
-    from src.infra.storage import get_trace_path as _trace_path
+    from src.model import capture_activations as _capture
+    from src.model import generate_trace as _gen
+    from src.model import load_model as _load
+    from src.storage import prepare_trace_tensors as _prepare
+    from src.storage import save_trace as _save
+    from src.storage import get_trace_path as _trace_path
 
     print(f"  [Worker {rank}] Starting on GPU {gpu_id} with {len(items)} items")
     model, tokenizer = _load(gpu_id=gpu_id)
@@ -564,7 +564,7 @@ def validate_multi_gpu(cfg, all_problems):
 
     # Verify output files exist
     import os
-    from src.infra.storage import get_trace_path as _tp
+    from src.storage import get_trace_path as _tp
     all_exist = True
     for item in work_items:
         trace_path = _tp(multi_tmp, item["dataset_name"], item["problem_id"], 0)

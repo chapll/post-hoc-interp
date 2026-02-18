@@ -1,4 +1,4 @@
-"""Tests for src.infra.config.load_config.
+"""Tests for src.config.load_config.
 
 load_config(script_config: str = None) -> DictConfig
 
@@ -13,7 +13,7 @@ import os
 import pytest
 from omegaconf import DictConfig
 
-from src.infra.config import load_config
+from src.config import load_config
 
 
 def test_load_base_config_returns_dictconfig():

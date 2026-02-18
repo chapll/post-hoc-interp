@@ -1,4 +1,4 @@
-"""Tests for src.infra.storage.
+"""Tests for src.storage.
 
 Tested functions (no GPU needed):
     derive_trace_seed(problem_id: str, trace_index: int) -> int
@@ -16,7 +16,7 @@ import os
 
 import pytest
 
-from src.infra.storage import (
+from src.storage import (
     derive_trace_seed,
     get_activation_path,
     get_failed_trace_json_path,

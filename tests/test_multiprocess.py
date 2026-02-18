@@ -1,4 +1,4 @@
-"""Tests for src.infra.multiprocess.split_work.
+"""Tests for src.multiprocess.split_work.
 
 Signature: split_work(items: list, num_workers: int) -> list[list]
 - Round-robin distribution, chunks differ by at most 1
@@ -7,7 +7,7 @@ Signature: split_work(items: list, num_workers: int) -> list[list]
 
 import pytest
 
-from src.infra.multiprocess import split_work
+from src.multiprocess import split_work
 
 
 class TestSplitWork:

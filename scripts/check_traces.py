@@ -17,8 +17,8 @@ from pathlib import Path
 
 import numpy as np
 
-from src.infra.config import load_config
-from src.infra.tokens import parse_think_boundaries
+from src.config import load_config
+from src.tokens import parse_think_boundaries
 
 
 def find_trace_files(traces_dir: str) -> list[Path]:

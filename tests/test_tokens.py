@@ -1,4 +1,4 @@
-"""Tests for src.infra.tokens.
+"""Tests for src.tokens.
 
 Constants:
     THINK_TOKEN_ID = 151667
@@ -13,7 +13,7 @@ Functions:
 
 import pytest
 
-from src.infra.tokens import (
+from src.tokens import (
     THINK_END_TOKEN_ID,
     THINK_TOKEN_ID,
     count_think_blocks,

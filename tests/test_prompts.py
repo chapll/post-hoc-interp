@@ -1,4 +1,4 @@
-"""Tests for src.infra.prompts.
+"""Tests for src.prompts.
 
 Tested function:
     build_verification_prompt(problem: dict, label_protocol: str = "swapped", config: str | None = None) -> dict
@@ -10,7 +10,7 @@ Datasets: gsm_symbolic (question, presented_answer), folio (premises, question),
 
 import pytest
 
-from src.infra.prompts import LABEL_MAPPINGS, build_verification_prompt
+from src.prompts import LABEL_MAPPINGS, build_verification_prompt
 
 GSM_PROBLEM = {
     "dataset_name": "gsm_symbolic",
