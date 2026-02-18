@@ -241,10 +241,10 @@ def test_parse_think_boundaries_robust(token_ids):
    - Files: `src/experimental/gorn/lib/config.py`, `src/config.py`
    - Priority: Medium
 
-5. **Training infrastructure** (`src/infra/*`):
+5. **Training infrastructure** (`archive/src/infra/*`) [archived]:
    - Risk: Distributed training setup failures, checkpoint corruption
-   - Files: `src/infra/parallelisms.py`, `src/infra/checkpointer.py`, `src/infra/train_iterator.py`
-   - Priority: Medium (current validation via runtime logging)
+   - Files: `archive/src/infra/parallelisms.py`, `archive/src/infra/checkpointer.py`, `archive/src/infra/train_iterator.py`
+   - Priority: Low (archived, not used by current research pipeline)
 
 **Team Conventions Needed:**
 

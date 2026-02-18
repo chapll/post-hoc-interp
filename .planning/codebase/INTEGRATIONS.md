@@ -24,7 +24,7 @@
   - SDK: `wandb` Python library
   - Configuration: `configs/wandb/default.yaml`
   - Features: Metrics logging, alerts on job launch/resume
-  - Implementation: `src/infra/logging.py` (WandBLogger class)
+  - Implementation: `archive/src/infra/logging.py` (WandBLogger class)
 
 ## Data Storage
 
@@ -63,7 +63,7 @@
 - Dual logging: terminal + file (`log.txt` in experiment dir)
 - Timezone: America/Los_Angeles
 - Per-GPU logs in distributed mode (rank-based filtering)
-- Implementation: `src/infra/logging.py` (MultiLogger class)
+- Implementation: `archive/src/infra/logging.py` (MultiLogger class)
 
 **Metrics:**
 - Wandb metrics logged at configurable intervals (default: every 50 steps)

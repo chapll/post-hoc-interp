@@ -113,7 +113,7 @@ SLURM_PARTITION="high"
 
 ## Constraints
 
-- **Workspace**: All new code in `src/infra/` (shared library) and `scripts/` (experiment scripts)
+- **Workspace**: All new code in `src/` (shared library) and `scripts/` (experiment scripts)
 - **GPU selection**: Must support specifying exact GPU IDs (e.g., GPUs 1 and 7) AND distributed data parallel across selected GPUs for throughput
 - **No mocks/fallbacks**: Every component must be real. Failures must propagate loudly with clear tracebacks
 - **No emoji**: Not in code, comments, print statements, or logs

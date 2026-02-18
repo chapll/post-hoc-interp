@@ -17,8 +17,8 @@
 - Fix approach: Add CPU-only unit tests for non-model logic (dataset loaders, storage, token parsing). Gate GPU-requiring tests with environment checks. Document minimum GPU requirements per operation (validation: 1x40GB, full trace gen: 4x80GB).
 
 **Hardcoded Pacific Timezone:**
-- Issue: Logging timestamps hardcoded to "America/Los_Angeles" timezone in `src/infra/logging.py:21` and `src/infra/logging.py:117`.
-- Files: `src/infra/logging.py` (lines 21, 117)
+- Issue: Logging timestamps hardcoded to "America/Los_Angeles" timezone in `archive/src/infra/logging.py:21` and `archive/src/infra/logging.py:117`.
+- Files: `archive/src/infra/logging.py` (lines 21, 117)
 - Impact: Log timestamps may be confusing for team members in other timezones. Not critical but reduces usability for distributed teams.
 - Fix approach: Read timezone from environment variable with LA as default, or use UTC for all logs.
 

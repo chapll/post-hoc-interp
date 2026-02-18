@@ -15,12 +15,12 @@
 
 ## Layers
 
-**Infrastructure Layer (src/infra/):**
-- Purpose: Provides reusable distributed training primitives and experiment management
-- Location: `src/infra/`
+**Infrastructure Layer (archived -- archive/src/infra/):**
+- Purpose: Provided reusable distributed training primitives and experiment management (archived, not used by current research pipeline)
+- Location: `archive/src/infra/`
 - Contains: Parallelism setup (FSDP, TP), checkpointing, logging (WandB + file), optimizers, training iterators
 - Depends on: PyTorch distributed, Hydra config system, WandB
-- Used by: Main training entry point (`src/train.py`), potentially by experimental scripts
+- Used by: Previously used by main training entry point; now archived
 
 **Model Layer (src/models/):**
 - Purpose: Model implementations and architecture definitions
@@ -53,7 +53,7 @@
 1. Entry point: `src/train.py` main() decorated with `@hydra.main`
 2. Hydra composes config from `configs/config.yaml` + defaults + CLI overrides
 3. Environment variables loaded from `.env` (EXP_DIR, DATA_DIR, SLURM settings)
-4. Logger initialized: `src/infra/logging.py` creates MultiLogger with WandB and file output
+4. Logger initialized: `archive/src/infra/logging.py` creates MultiLogger with WandB and file output
 5. Training function executed with simple MLP identity task (0→0, 1→1)
 6. Metrics logged to both terminal and `{run_dir}/log.txt`
 
@@ -78,25 +78,25 @@
    - Save as safetensors to `data/activations/` with BF16 dtype
 
 **State Management:**
-- Training checkpoints: Distributed checkpoint format via `src/infra/checkpointer.py` (DCP)
+- Training checkpoints: Distributed checkpoint format via `archive/src/infra/checkpointer.py` (DCP)
 - Experiment logs: Per-run directories with timestamped names `{date}/{exp_name}_{time}/`
 - Activation storage: Decoupled safetensors files (activations) + JSON metadata (traces)
 
 ## Key Abstractions
 
-**MultiLogger (src/infra/logging.py):**
+**MultiLogger (archive/src/infra/logging.py) [archived]:**
 - Purpose: Unified logging interface combining terminal, file, and WandB outputs
-- Examples: `src/infra/logging.py:MultiLogger`, used in `src/train.py:main()`
+- Examples: `archive/src/infra/logging.py:MultiLogger`
 - Pattern: Singleton pattern via get_logger(); rank-0-only file writes in distributed mode
 
-**Checkpointer (src/infra/checkpointer.py):**
+**Checkpointer (archive/src/infra/checkpointer.py) [archived]:**
 - Purpose: Save/load model, optimizer, scheduler, and data sampler state for distributed training
-- Examples: `src/infra/checkpointer.py:Checkpointer`
+- Examples: `archive/src/infra/checkpointer.py:Checkpointer`
 - Pattern: Wrapper around torch.distributed.checkpoint with metadata preservation (WandB ID tracking)
 
-**Parallelism Mesh (src/infra/parallelisms.py):**
+**Parallelism Mesh (archive/src/infra/parallelisms.py) [archived]:**
 - Purpose: Configure tensor parallel, FSDP, and data parallel dimensions for distributed training
-- Examples: `src/infra/parallelisms.py:get_world_mesh()`, `apply_parallelisms()`
+- Examples: `archive/src/infra/parallelisms.py:get_world_mesh()`, `apply_parallelisms()`
 - Pattern: Device mesh creation with named dimensions (dp_replicate, dp_shard, tp)
 
 **Multi-GPU Work Splitting (src/experimental/gorn/lib/multiprocess.py):**

@@ -90,16 +90,15 @@ post-hoc-interp/
 - Key files: `src/models/mlp.py`
 - Note: Research uses external Qwen3-8B, not defined here
 
-**src/infra/:**
-- Purpose: Reusable distributed training infrastructure adapted from test-time-training/ttt-video-dit
+**archive/src/infra/:**
+- Purpose: Archived distributed training infrastructure adapted from test-time-training/ttt-video-dit (not used by current research pipeline)
 - Contains: Logging, checkpointing, parallelism setup, optimizers, training utilities
 - Key files:
-  - `src/infra/logging.py`: MultiLogger class for terminal + file + WandB
-  - `src/infra/checkpointer.py`: Distributed checkpoint save/load wrapper
-  - `src/infra/parallelisms.py`: FSDP, TP, and device mesh configuration
-  - `src/infra/optimizers.py`: Custom optimizer implementations
-  - `src/infra/train_iterator.py`: Training loop helpers
-  - `src/infra/utils.py`: Seed setting, timing utilities
+  - `archive/src/infra/logging.py`: MultiLogger class for terminal + file + WandB
+  - `archive/src/infra/checkpointer.py`: Distributed checkpoint save/load wrapper
+  - `archive/src/infra/parallelisms.py`: FSDP, TP, and device mesh configuration
+  - `archive/src/infra/optimizers.py`: Custom optimizer implementations
+  - `archive/src/infra/train_iterator.py`: Training loop helpers
 
 **src/experimental/:**
 - Purpose: Per-researcher isolated workspaces with user-specific code and configs
@@ -162,11 +161,11 @@ post-hoc-interp/
 - `src/experimental/gorn/configs/base.yaml`: Gorn's base experiment config
 
 **Core Logic:**
-- `src/infra/logging.py`: MultiLogger implementation
-- `src/infra/parallelisms.py`: Distributed training setup
-- `src/experimental/gorn/lib/model.py`: Model loading and activation capture
-- `src/experimental/gorn/lib/multiprocess.py`: Multi-GPU orchestration
-- `src/experimental/gorn/lib/datasets.py`: Dataset loading and preprocessing
+- `src/model.py`: Model loading and activation capture
+- `src/multiprocess.py`: Multi-GPU orchestration
+- `src/datasets.py`: Dataset loading and preprocessing
+- `archive/src/infra/logging.py`: MultiLogger implementation (archived)
+- `archive/src/infra/parallelisms.py`: Distributed training setup (archived)
 
 **Testing:**
 - No dedicated test directory currently
@@ -196,7 +195,7 @@ post-hoc-interp/
 ## Where to Add New Code
 
 **New Shared Infrastructure Module:**
-- Primary code: `src/infra/{module_name}.py`
+- Primary code: `src/{module_name}.py`
 - Config: `configs/{module_name}/default.yaml`
 - Import in entry points as needed
 
@@ -222,8 +221,7 @@ post-hoc-interp/
 - Example: Copy `configs/deploy/submitit_example.yaml` and customize for specific cluster
 
 **Utilities:**
-- Shared helpers: `src/infra/utils.py`
-- Experimental helpers: `src/experimental/gorn/lib/utils.py`
+- Shared helpers: `src/utils.py`
 
 ## Special Directories
 
@@ -265,8 +263,7 @@ post-hoc-interp/
 - Each researcher's experiments, configs, and hardware-specific settings
 
 **Shared Code:**
-- `src/infra/`: Training infrastructure usable by all researchers
-- `src/models/`: Shared model implementations
+- `src/`: Research infrastructure modules (config, datasets, model, multiprocess, prompts, storage, tokens, utils)
 - `configs/`: Template configurations (users customize via .env and personal deploy configs)
 
 **Machine-Specific Configuration:**
@@ -275,7 +272,7 @@ post-hoc-interp/
 - `src/experimental/{user}/configs/`: Hardcoded relative paths in base.yaml are user-customizable
 
 **Cross-User Collaboration Pattern:**
-- Shared infrastructure changes: Commit to `src/infra/` and `configs/` templates
+- Shared infrastructure changes: Commit to `src/` and `configs/` templates
 - User experiments: Keep in `src/experimental/{user}/`; coordinate via .planning/ docs
 - Hardware differences: Document in config comments; use CLI args (--gpus) for flexibility
 

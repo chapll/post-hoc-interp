@@ -25,8 +25,8 @@
 - Dataclasses: Config classes use `PascalCase` with `Config` suffix (`JobConfig`, `ModelConfig`, `TrainingConfig`)
 
 **Modules:**
-- Package structure: `src/` root with subpackages `infra/`, `models/`, `experimental/gorn/`
-- Experimental work: Isolated in `src/experimental/{username}/` directories (e.g., `src/experimental/gorn/`)
+- Package structure: `src/` root with modules directly in `src/` (config, datasets, model, multiprocess, prompts, storage, tokens, utils)
+- Old training infra archived in `archive/src/infra/`
 
 ## Code Style
 
@@ -65,8 +65,8 @@ import hydra
 import torch
 import torch.nn as nn
 
-from src.infra.logging import get_logger
-from src.models.mlp import TwoLayerMLP
+from src.config import load_config
+from src.model import load_model
 ```
 
 From `src/experimental/gorn/scripts/generate_traces.py`:
@@ -87,8 +87,7 @@ from lib.datasets import (...)
 ```
 
 **Path Aliases:**
-- Standard project imports use absolute: `from src.infra.logging import ...`
-- Experimental code uses `sys.path.insert` hack for relative imports within experiment: `sys.path.insert(0, "src/experimental/gorn")` then `from lib.config import ...`
+- Standard project imports use absolute: `from src.config import ...`
 
 **Note on Team Conventions:**
 The `sys.path.insert` pattern in experimental code is user-specific (Gorn's experimental directory). Main codebase uses clean absolute imports from `src.`.
@@ -143,7 +142,7 @@ except Exception:
 - Format: `[LEVEL] name: message` (see `src/experimental/gorn/lib/utils.py:76`)
 
 **Multi-logger pattern:**
-Main training infrastructure uses custom `MultiLogger` (`src/infra/logging.py:90`) that:
+Main training infrastructure uses custom `MultiLogger` (`archive/src/infra/logging.py:90`) that:
 - Writes to both terminal and log file
 - Integrates with WandB for metric tracking
 - Supports rank-aware logging (only rank 0 writes to file in distributed mode)
@@ -171,7 +170,7 @@ logger.write("Config details", log_terminal=False)  # File only
 - Module docstrings: Every module has a docstring explaining purpose (see `src/experimental/gorn/lib/datasets.py:1`)
 - Function docstrings: Public functions have Google-style docstrings with Args/Returns/Raises
 - Inline comments: Used sparingly for non-obvious logic or important warnings
-- Copyright notices: Files adapted from external sources include attribution (see `src/infra/logging.py:1-3`)
+- Copyright notices: Files adapted from external sources include attribution (see `archive/src/infra/logging.py:1-3`)
 
 **Docstring Style:**
 Google-style with typed parameters:
@@ -218,8 +217,8 @@ construct prompts with configurable label tokens...
 
 **Exports:**
 - No explicit `__all__` declarations
-- Import specific names: `from lib.config import load_config`
-- Group related imports: `from lib.datasets import (load_folio, load_gsm_symbolic_contamination, load_strategyqa)`
+- Import specific names: `from src.config import load_config`
+- Group related imports: `from src.datasets import (load_folio, load_gsm_symbolic_contamination, load_strategyqa)`
 
 **Barrel Files:**
 - `__init__.py` files are empty (see `src/experimental/gorn/lib/__init__.py`, `src/experimental/gorn/scripts/__init__.py`)
