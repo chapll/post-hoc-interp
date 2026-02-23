@@ -1,0 +1,38 @@
+# Cross-seed transition consistency experiment config
+# Merges on top of base.yaml via load_config("configs/cross_seed.yaml")
+
+# Inherit generation parameters from base.yaml (temperature=0.6, top_p=0.95, top_k=20)
+model:
+  max_new_tokens: 4096
+
+cross_seed:
+  # Trace generation
+  new_trace_start: 3          # first new trace index (0-2 already exist)
+  new_trace_end: 20           # exclusive end (generates indices 3-19)
+  total_seeds: 20             # total seeds per problem (0-19)
+  min_valid_seeds: 10         # minimum seeds to include problem in metrics
+
+  # Probing (same parameters as Phase 2.2)
+  num_probes: 20
+  min_probe_spacing: 5
+  max_new_tokens: 15
+
+  # Selection (reproduces Phase 2.2 selection)
+  selection_seed: 137
+  n_correct: 40
+  n_incorrect: 10
+  trace_index: 0              # Phase 2.2 used trace_00 for selection
+
+  # Token IDs (same as Phase 2.2)
+  close_token_ids: [151668, 198]
+  rho_token_ids: [49, 6161]
+  tau_token_id: 92713
+
+  # Interpolation
+  interp_grid_points: 21      # np.linspace(0, 1, 21) for cross-seed comparison
+
+paths:
+  traces_dir: "${paths.data_dir}/traces"
+  output_dir: "${oc.env:EXP_DIR}/force_answer_seeds"
+
+gpus: [0, 1, 2, 3]
