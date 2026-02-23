@@ -24,6 +24,7 @@ from transformers import DynamicCache
 
 from src.config import load_config
 from src.model import load_model
+from src.multiprocess import run_parallel, split_work
 from src.utils import set_seed, setup_logging
 
 # ---------------------------------------------------------------------------
@@ -531,8 +532,59 @@ def probe_trace(raw_model, tokenizer, trace_data, cfg, device):
 
 
 # ---------------------------------------------------------------------------
+# Worker function for multi-GPU execution
+# ---------------------------------------------------------------------------
+
+def _worker(rank, gpu_id, items, cfg):
+    """Worker function: load model, probe assigned traces, write shard.
+
+    Args:
+        rank: Worker rank (0-indexed).
+        gpu_id: CUDA device index.
+        items: List of trace dicts assigned to this worker.
+        cfg: OmegaConf config.
+    """
+    worker_logger = setup_logging(f"force_answer.worker{rank}")
+    worker_logger.info("Worker %d starting on GPU %d with %d traces", rank, gpu_id, len(items))
+
+    if not items:
+        worker_logger.info("Worker %d has no items, exiting", rank)
+        return
+
+    model, tokenizer = load_model(gpu_id=gpu_id)
+    raw_model = model._model
+    device = next(raw_model.parameters()).device
+    worker_logger.info("Worker %d model loaded on %s", rank, device)
+
+    all_results = []
+    for trace_data in tqdm(items, desc=f"GPU {gpu_id}", position=rank):
+        rows = probe_trace(raw_model, tokenizer, trace_data, cfg, device)
+        all_results.extend(rows)
+        torch.cuda.empty_cache()
+
+    # Write shard to temporary parquet
+    if all_results:
+        output_dir = cfg.paths.output_dir
+        os.makedirs(output_dir, exist_ok=True)
+        shard_path = os.path.join(output_dir, f"results_shard_{rank}.parquet")
+        df = pd.DataFrame(all_results)
+        df.to_parquet(shard_path, index=False)
+        worker_logger.info("Worker %d wrote %d rows to %s", rank, len(df), shard_path)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
+REQUIRED_COLUMNS = [
+    "trace_id", "dataset", "problem_id", "probe_position",
+    "normalized_position", "correct", "no_answer", "rho_prob",
+    "tau_prob", "correct_token_prob", "correct_token_rank",
+    "ground_truth", "is_correct_trace", "is_fresh", "prompt_config",
+    "valid_token", "invalid_token", "token_answer", "string_answer",
+    "agreement", "think_length",
+]
+
 
 def main():
     """Run the force-answer transition experiment."""
@@ -540,21 +592,15 @@ def main():
     cfg = load_config()
     set_seed(cfg.seed)
 
-    fa = cfg.force_answer
-
-    logger_main.info("Loading model on GPU %d...", cfg.gpus[0])
-    model, tokenizer = load_model(gpu_id=cfg.gpus[0])
-    raw_model = model._model
-    device = next(raw_model.parameters()).device
-    logger_main.info("Model loaded on %s", device)
-
-    # Resolve paths
-    traces_dir = cfg.paths.traces_dir
+    gpu_ids = list(cfg.gpus)
     output_dir = cfg.paths.output_dir
+    traces_dir = cfg.paths.traces_dir
+
     logger_main.info("Traces directory: %s", traces_dir)
     logger_main.info("Output directory: %s", output_dir)
+    logger_main.info("GPUs: %s", gpu_ids)
 
-    # Load traces
+    # Load and select traces (done once in main process)
     traces = load_traces_for_experiment(traces_dir, cfg)
     n_correct = sum(1 for t in traces if t["is_correct"])
     n_incorrect = len(traces) - n_correct
@@ -582,35 +628,36 @@ def main():
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
 
-    # Run probing
-    all_results = []
+    # Run probing across GPUs
     start_time = time.time()
-
-    for trace_data in tqdm(traces, desc="Probing traces"):
-        rows = probe_trace(raw_model, tokenizer, trace_data, cfg, device)
-        all_results.extend(rows)
-
+    run_parallel(_worker, traces, gpu_ids, cfg)
     elapsed = time.time() - start_time
-    logger_main.info("Probing completed in %.1fs", elapsed)
+    logger_main.info("Probing completed in %.1fs across %d GPU(s)", elapsed, len(gpu_ids))
 
-    # Build DataFrame
-    df = pd.DataFrame(all_results)
+    # Merge shards into single results.parquet
+    shard_dfs = []
+    for rank in range(len(gpu_ids)):
+        shard_path = os.path.join(output_dir, f"results_shard_{rank}.parquet")
+        if os.path.isfile(shard_path):
+            shard_dfs.append(pd.read_parquet(shard_path))
+            os.remove(shard_path)
+
+    if not shard_dfs:
+        logger_main.error("No result shards found -- all workers may have failed")
+        return
+
+    df = pd.concat(shard_dfs, ignore_index=True)
 
     # Ensure all required columns exist
-    required_columns = [
-        "trace_id", "dataset", "problem_id", "probe_position",
-        "normalized_position", "correct", "no_answer", "rho_prob",
-        "tau_prob", "correct_token_prob", "correct_token_rank",
-        "ground_truth", "is_correct_trace", "is_fresh", "prompt_config",
-        "valid_token", "invalid_token", "token_answer", "string_answer",
-        "agreement", "think_length",
-    ]
-    for col in required_columns:
+    for col in REQUIRED_COLUMNS:
         if col not in df.columns:
             logger_main.warning("Missing column %s, adding with None", col)
             df[col] = None
 
-    # Save to parquet
+    # Sort by trace_id and probe_position for deterministic output
+    df = df.sort_values(["trace_id", "probe_position"]).reset_index(drop=True)
+
+    # Save final parquet
     output_path = os.path.join(output_dir, "results.parquet")
     df.to_parquet(output_path, index=False)
     logger_main.info("Saved %d rows to %s", len(df), output_path)

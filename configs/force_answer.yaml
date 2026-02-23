@@ -21,4 +21,4 @@ paths:
   traces_dir: "${paths.data_dir}/traces"
   output_dir: "${oc.env:EXP_DIR}/force_answer"
 
-gpus: [0]  # single GPU for pilot
+gpus: [0, 1, 2, 3]  # 4 GPUs for pilot
