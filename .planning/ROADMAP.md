@@ -17,6 +17,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Foundation and Validation** - Model loading, datasets, config, storage, and end-to-end nnsight validation on a single problem
 - [x] **Phase 2: Trace Generation at Scale** - Two-pass trace generation across ~400 problems with multi-GPU parallelism and contamination mitigation
 - [x] **Phase 2.1: Repo Restructure and Shared Infra Stabilization** (INSERTED) - Promote experimental/gorn/ code to main repo structure, eliminate experimental dirs, validate all imports and pipeline stability
+- [x] **Phase 2.2: Force-Answer Transition Experiment** (INSERTED) - Truncate thinking at probe points, force model to answer, plot accuracy-vs-position to detect phase transition
 - [ ] **Phase 3: Probing and Transition Detection** - Linear probes, selectivity controls, transition point identification, cosine similarity dynamics, Cox 2x2 framework
 - [ ] **Phase 4: Differential Analysis and Vector Extraction** - Performativity vector via Difference in Means, cross-dataset analysis, IPHR reversed pairs, unfaithfulness patterns
 - [ ] **Phase 5: Causal Steering Validation** - Steering with performativity vector, sham controls, entropy baseline, greedy pruning baseline, random/midpoint baselines
@@ -99,9 +100,61 @@ Plans:
 - [x] 02.1-02-PLAN.md -- Fix all imports (from lib.X -> from src.infra.X), config path resolution, YAML config paths
 - [x] 02.1-03-PLAN.md -- Sync dependencies, validate imports, write Tier 1 unit tests for shared infra
 
+### Phase 2.2: Force-Answer Transition Experiment (INSERTED)
+**Goal**: Determine whether Qwen3-8B exhibits a phase transition during chain-of-thought reasoning — a point where the model shifts from "not knowing" to "reliably knowing" the correct answer. Test this by truncating the thinking trace at evenly-spaced positions, force-closing the `<think>` block with `</think>\n`, and letting the model freely generate its answer. Record correctness, logit rank of the correct answer token, and probability at each probe point. Plot accuracy-vs-position curves to visualize transition dynamics.
+**Depends on**: Phase 2.1 (needs existing traces with thinking blocks and Rho/Tau answer tokens)
+**Requirements**: None (exploratory experiment, informs Phase 3 design)
+**Key Risks**:
+  - Model may not cooperate when thinking is force-closed early (may produce garbage or continue thinking instead of answering) — handle as "no answer" data points
+  - KV cache reuse at different truncation points must be implemented correctly to avoid stale state
+  - Even spacing may miss the exact transition — future iterations can try denser-near-boundaries or fixed-stride spacing
+**Experiment Design**:
+  - **Input**: ~50 existing traces (small pilot) from `DATA_DIR/traces/valid/`
+  - **Probe points**: ~20 evenly-spaced positions within each trace's thinking block (between `<think>` and `</think>` tokens)
+  - **At each probe point t**: Truncate to tokens [0..t], append `</think>\n`, generate answer tokens freely
+  - **Record per probe point**: (1) whether the generated answer matches ground truth, (2) logit rank of correct answer token at the generation step, (3) probability of correct answer token
+  - **Output**: Per-trace accuracy curve, aggregate accuracy-vs-normalized-position plot, per-dataset breakdown
+  - **Future spacing strategies**: denser near boundaries, fixed stride (every N tokens)
+**Success Criteria** (what must be TRUE):
+  1. Script that loads existing traces, probes at ~20 positions per trace, and generates forced answers using KV-cache-efficient truncation
+  2. Results saved as structured JSON per trace: list of (position, correct, logit_rank, probability) tuples
+  3. Aggregate accuracy-vs-position plot (normalized position 0-1 on x-axis, accuracy on y-axis) showing whether a transition exists
+  4. Per-dataset breakdown (GSM-Symbolic, FOLIO, StrategyQA) to see if transition dynamics vary by task type
+  5. Summary statistics: median transition point (if any), sharpness of transition, fraction of traces with clean transitions
+**Plans**: 2 plans
+
+Plans:
+- [x] 02.2-01-PLAN.md -- Dependencies, config, and core experiment script (trace loading, KV-cache probing, answer extraction, result storage)
+- [x] 02.2-02-PLAN.md -- Visualization script (accuracy/probability plots, per-dataset breakdown, summary statistics) and visual verification
+
+### Phase 2.3: Cross-Seed Transition Consistency (INSERTED)
+**Goal**: For each of ~41 originally-correct problems, generate 20 traces (different seeds) and probe all of them at ~20 positions to determine whether the model's transition from "not knowing" to "knowing" the correct answer occurs at a consistent normalized position across seeds. Per-problem visualization (mean + individual seed curves) and cross-seed agreement quantification (sharpness, variance, Spearman correlation).
+**Depends on**: Phase 2.2 (reuses force-answer probing infrastructure and existing trace data)
+**Requirements**: None (exploratory experiment, extends Phase 2.2 findings)
+**Key Risks**:
+  - Transition point may not be consistent across seeds for some problems (that's data, not a failure)
+  - Some problems may not show a clear transition in any seed
+  - Multi-think-block traces reduce effective seed count per problem (filter and skip)
+**Experiment Design**:
+  - **Input**: Same ~51 problems from Phase 2.2 selection, filtered to ~41 originally-correct. Generate 17 new traces (indices 3-19) per problem, reuse 3 existing (indices 0-2) = 20 total per problem.
+  - **Probing**: All 20 traces probed at ~20 positions each (~16,400 total probes)
+  - **Per-problem output**: Two-panel PNG (accuracy + probability) with 20 faint seed curves and bold mean
+  - **Quantification**: Per-problem sharpness (max slope), position-wise variance, pairwise Spearman correlation
+**Success Criteria** (what must be TRUE):
+  1. 697 new trace files generated (41 problems x 17 seeds) and probed alongside 3 existing traces
+  2. Per-problem visualization: 20 seed curves overlaid showing transition consistency (or lack thereof)
+  3. Cross-seed transition agreement quantified per problem (sharpness, variance, Spearman)
+  4. Summary: sharpness histogram and agreement scatter across all problems
+**Plans**: 3 plans
+
+Plans:
+- [x] 02.3-01-PLAN.md -- Config and targeted trace generation (17 new traces per ~41 problems)
+- [x] 02.3-02-PLAN.md -- Cross-seed probing script (20 seeds x ~20 probes per problem)
+- [x] 02.3-03-PLAN.md -- Per-problem visualization, agreement metrics, summary plots, and visual verification
+
 ### Phase 3: Probing and Transition Detection
 **Goal**: Researcher has layer-wise probe AUROC curves across all three datasets with selectivity controls, per-trace transition points with quality categorization, cosine similarity dynamics with statistical tests, and Cox 2x2 classification of post-transition CoT segments. Probes train on `ground_truth` (abstract validity: Yes/No), decoupled from output token (Rho/Tau) by the swapped-label protocol.
-**Depends on**: Phase 2.1
+**Depends on**: Phase 2.3
 **Requirements**: REQ-P1, REQ-P2, REQ-P3, REQ-P4, REQ-P5
 **Key Risks**:
   - Spurious probe correlations due to high dimension-to-sample ratio (P1: d=4096, n=1500; must run selectivity controls from day one)
@@ -188,13 +241,15 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in strict numeric order: 1 -> 2 -> 2.1 -> 3 -> 4 -> 5 -> 6. Each phase depends on the previous phase's output.
+Phases execute in strict numeric order: 1 -> 2 -> 2.1 -> 2.2 -> 2.3 -> 3 -> 4 -> 5 -> 6. Each phase depends on the previous phase's output.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|---------------|--------|-----------|
 | 1. Foundation and Validation | 6/6 | Complete | 2026-02-04 |
 | 2. Trace Generation at Scale | 6/6 | Complete | 2026-02-05 |
 | 2.1 Repo Restructure and Shared Infra Stabilization | 3/3 | Complete | 2026-02-06 |
+| 2.2 Force-Answer Transition Experiment | 2/2 | Complete | 2026-02-23 |
+| 2.3 Cross-Seed Transition Consistency | 3/3 | Complete | 2026-02-23 |
 | 3. Probing and Transition Detection | 0/TBD | Not started | - |
 | 4. Differential Analysis and Vector Extraction | 0/TBD | Not started | - |
 | 5. Causal Steering Validation | 0/TBD | Not started | - |

@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-04)
 
 **Core value:** Identify the exact internal transition point where Qwen3-8B shifts from "searching" to "knowing" the answer, and provide mechanistic causal evidence that post-transition tokens are performative.
-**Current focus:** Phase 2.1 complete and UAT passed (10/10). Full-scale trace generation running on 8 GPUs. Quick tasks 001-002 completed. Data paths now resolve from DATA_DIR env var. Ready for Phase 3.
+**Current focus:** Phases 2.2 and 2.3 complete. Cross-seed pipeline scripted (config + generation, probing, visualization). GPU execution needed. Phase 3 planning next.
 
 ## Current Position
 
-Phase: 2.1 of 6 (Repo Restructure and Shared Infra Stabilization)
-Plan: 3 of 3 (smoke test and Tier 1 unit tests)
-Status: Phase complete
-Last activity: 2026-02-18 -- Quick task 002: moved data to DATA_DIR, config env-var interpolation. All 81 tests pass.
+Phase: 2.3 of 6 (Cross-Seed Transition Consistency)
+Plan: 3 of 3 (visualization + metrics) -- PHASE COMPLETE
+Status: Phase 2.3 complete
+Last activity: 2026-02-23 -- Completed 02.3-03-PLAN.md (visualization + metrics)
 
-Progress: [#########.] ~45%
+Progress: [###########-] ~55%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 17 (15 phase plans + 2 quick tasks)
+- Total plans completed: 21 (19 phase plans + 2 quick tasks)
 - Average duration: 5min
-- Total execution time: ~1.73 hours
+- Total execution time: ~2.1 hours
 
 **By Phase:**
 
@@ -30,10 +30,12 @@ Progress: [#########.] ~45%
 | 01-foundation | 6/6 | 48min | 8min | Complete |
 | 02-trace-generation-at-scale | 6/6 | 31min | 5min | Complete |
 | 02.1-repo-restructure | 3/3 | 12min | 4min | Complete |
+| 02.2-force-answer-experiment | 2/2 | 16min | 8min | Complete |
+| 02.3-cross-seed-consistency | 3/3 | 14min | 4.7min | Complete |
 
 **Recent Trend:**
-- Last 5 plans: 02.1-01 (3min), 02.1-02 (3min), 02.1-03 (6min), quick-001 (11min), quick-002 (4min)
-- Trend: Steady, mechanical restructure tasks run efficiently
+- Last 5 plans: 02.2-01 (8min), 02.3-01 (5min), 02.3-02 (4min), 02.3-03 (5min)
+- Trend: Steady execution, experiment scripts averaging ~5 min each
 
 *Updated after each plan completion*
 
@@ -82,10 +84,24 @@ Recent decisions affecting current work:
 - **Flat src/ package**: all modules directly under src/ (no infra/ subpackage) -- imports use `from src.X import Y`
 - **DATA_DIR env-var interpolation**: configs use `${oc.env:DATA_DIR,data}` with "data" fallback; traces_dir and activations_dir derive from data_dir
 - **DATA_DIR is /mnt/data/aahmad/data** (not post-hoc-interp subdir) -- trace data at /mnt/data/aahmad/data/traces/
+- **DynamicCache crop() for KV-cache-efficient probing** -- process probes in descending order, deepcopy before generate()
+- **Dual answer matching** -- token-level (Rho/Tau IDs) + string-level (decoded text), disagreements flagged
+- **correct_token_rank via double argsort** on float32 softmax probabilities (0-indexed, 0 = highest)
+- **Re-implement Phase 2.2 selection logic inline** in select_problems() rather than importing -- avoids config shim coupling
+- **Extract verification_prompt from existing trace metadata** (not reconstructed) -- guarantees byte-identical prompts across seeds
+- **Trace indices 3-19 for new seeds; 0-2 existing traces left untouched**
+- **cfg_shim pattern**: when reusing probe_trace() across experiments with different config schemas, create minimal OmegaConf wrapper with expected `force_answer` key
+- **Import probing functions from force_answer_experiment.py** via sys.path -- single source of truth for KV-cache probing logic
+- **run_parallel_isolated for cross-seed probing** -- longer job (~20-30 min) where one OOM should not abort all workers
+- **21-point interpolation grid** (np.linspace(0, 1, 21)) for cross-seed curve comparison
+- **Sharpness = max absolute slope of mean accuracy curve** (max of |np.diff / np.diff(grid)|)
+- **No formal transition point detection** -- raw data visualization per locked decision
 
 ### Roadmap Evolution
 
 - Phase 2.1 inserted after Phase 2: Repo restructure and shared infra stabilization (INSERTED) -- promote experimental/gorn/ to main repo, eliminate experimental dirs, validate stability
+- Phase 2.2 inserted after Phase 2.1: Force-answer transition experiment (INSERTED) -- truncate thinking at probe points, force model to answer, plot accuracy-vs-position to detect phase transition. Exploratory experiment to validate core hypothesis before full probing infrastructure.
+- Phase 2.3 inserted after Phase 2.2: Cross-seed transition consistency (INSERTED) -- for each problem, probe all 3 traces (different seeds) to check if the transition point is consistent across seeds. Per-problem visualization + cross-seed agreement quantification. Aggregate analysis from 2.2 dilutes signal; per-problem cross-seed analysis is the right lens.
 
 ### Pending Todos
 
@@ -109,6 +125,7 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-02-18
-Stopped at: Quick task 002 complete (data moved to DATA_DIR, config env-var interpolation). Next: Phase 3 (Probing and Transition Detection).
+Last session: 2026-02-23
+Stopped at: Completed Phase 2.3 (cross-seed transition consistency). All 3 plans executed, scripts ready for GPU. Next: Phase 3 (probing and transition detection).
+Resume file: None
 Resume file: None
