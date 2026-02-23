@@ -1,0 +1,24 @@
+# Force-answer experiment config
+# Merges on top of base.yaml via load_config("configs/force_answer.yaml")
+
+force_answer:
+  # Pilot parameters
+  traces_per_dataset: 17         # ~50 total across 3 datasets
+  n_correct: 40                  # target correct traces total
+  n_incorrect: 10                # target incorrect traces total
+  num_probes: 20                 # probe points per trace
+  min_probe_spacing: 5           # minimum tokens between probes
+  max_new_tokens: 15             # tokens to generate at each probe
+  trace_index: 0                 # use trace_00 from each problem
+  selection_seed: 137            # seed for trace selection RNG
+
+  # Token IDs (verified from research)
+  close_token_ids: [151668, 198] # </think> + \n
+  rho_token_ids: [49, 6161]      # "R" + "ho"
+  tau_token_id: 92713            # single token
+
+paths:
+  traces_dir: "${paths.data_dir}/traces"
+  output_dir: "${oc.env:EXP_DIR}/force_answer"
+
+gpus: [0]  # single GPU for pilot
