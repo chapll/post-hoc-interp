@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-04)
 
 **Core value:** Identify the exact internal transition point where Qwen3-8B shifts from "searching" to "knowing" the answer, and provide mechanistic causal evidence that post-transition tokens are performative.
-**Current focus:** Phases 2.2 and 2.3 complete. Cross-seed pipeline scripted (config + generation, probing, visualization). GPU execution needed. Phase 3 planning next.
+**Current focus:** Phase 3 (Probing and Transition Detection) in progress. Foundation artifacts (transition detection module, config) complete. Probe training pipeline next.
 
 ## Current Position
 
-Phase: 2.3 of 6 (Cross-Seed Transition Consistency)
-Plan: 3 of 3 (visualization + metrics) -- PHASE COMPLETE
-Status: Phase 2.3 complete
-Last activity: 2026-02-23 -- Completed 02.3-03-PLAN.md (visualization + metrics)
+Phase: 3 of 6 (Probing and Transition Detection)
+Plan: 1 of 4 (foundation artifacts) -- COMPLETE
+Status: Phase 3 in progress
+Last activity: 2026-02-26 -- Completed 03-01-PLAN.md (foundation artifacts)
 
-Progress: [###########-] ~55%
+Progress: [############-] ~60%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 21 (19 phase plans + 2 quick tasks)
+- Total plans completed: 22 (20 phase plans + 2 quick tasks)
 - Average duration: 5min
-- Total execution time: ~2.1 hours
+- Total execution time: ~2.2 hours
 
 **By Phase:**
 
@@ -32,10 +32,11 @@ Progress: [###########-] ~55%
 | 02.1-repo-restructure | 3/3 | 12min | 4min | Complete |
 | 02.2-force-answer-experiment | 2/2 | 16min | 8min | Complete |
 | 02.3-cross-seed-consistency | 3/3 | 14min | 4.7min | Complete |
+| 03-probing-and-transition-detection | 1/4 | 6min | 6min | In Progress |
 
 **Recent Trend:**
-- Last 5 plans: 02.2-01 (8min), 02.3-01 (5min), 02.3-02 (4min), 02.3-03 (5min)
-- Trend: Steady execution, experiment scripts averaging ~5 min each
+- Last 5 plans: 02.3-01 (5min), 02.3-02 (4min), 02.3-03 (5min), 03-01 (6min)
+- Trend: Steady execution, foundation/infrastructure plans averaging ~6 min
 
 *Updated after each plan completion*
 
@@ -96,6 +97,9 @@ Recent decisions affecting current work:
 - **21-point interpolation grid** (np.linspace(0, 1, 21)) for cross-seed curve comparison
 - **Sharpness = max absolute slope of mean accuracy curve** (max of |np.diff / np.diff(grid)|)
 - **No formal transition point detection** -- raw data visualization per locked decision
+- **Four detection methods run independently** on every curve; best method chosen after seeing real data (derivative, PELT, BinSeg, sigmoid)
+- **Primary sigmoid R2 threshold is 0.85** (median of sweep range [0.75, 0.80, 0.85, 0.90, 0.95])
+- **Graceful degradation for short signals** in ruptures methods (BinSeg/PELT) -- log warning and return noisy-signal/no-signal instead of crashing
 
 ### Roadmap Evolution
 
@@ -125,7 +129,6 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-02-23
-Stopped at: Completed Phase 2.3 (cross-seed transition consistency). All 3 plans executed, scripts ready for GPU. Next: Phase 3 (probing and transition detection).
-Resume file: None
+Last session: 2026-02-26
+Stopped at: Completed 03-01-PLAN.md (foundation artifacts). Transition detection module and Phase 3 config ready. Next: 03-02 (layer selection pilot and probe training).
 Resume file: None

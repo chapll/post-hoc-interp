@@ -155,23 +155,24 @@ Plans:
 ### Phase 3: Probing and Transition Detection
 **Goal**: Researcher has layer-wise probe AUROC curves across all three datasets with selectivity controls, per-trace transition points with quality categorization, cosine similarity dynamics with statistical tests, and Cox 2x2 classification of post-transition CoT segments. Probes train on `ground_truth` (abstract validity: Yes/No), decoupled from output token (Rho/Tau) by the swapped-label protocol.
 **Depends on**: Phase 2.3
-**Requirements**: REQ-P1, REQ-P2, REQ-P3, REQ-P4, REQ-P5
+**Requirements**: REQ-P1, REQ-P2, REQ-P3, REQ-P4 (REQ-P5 dropped per CONTEXT.md Decision 7)
 **Key Risks**:
   - Spurious probe correlations due to high dimension-to-sample ratio (P1: d=4096, n=1500; must run selectivity controls from day one)
   - No clean transition points for a significant fraction of traces (P5: must handle gradual, absent, and immediate transitions gracefully)
   - Class imbalance in verification tasks (P15: mitigated by balanced dataset construction in Phase 2)
 **Success Criteria** (what must be TRUE):
   1. Linear probes (nn.Linear(4096, 2)) trained on residual stream activations produce per-layer AUROC curves for each dataset with 5-fold stratified cross-validation, and random-label control probes report AUROC alongside real probes (with warnings if control AUROC > 0.60)
-  2. Transition points identified per trace using sustained-K=5 at threshold 0.95 (primary) and sliding-window W=10 at threshold 0.90 (sensitivity check), with each trace categorized as clean, gradual, absent, or immediate
-  3. Step-wise cosine similarity S_t computed at the best-probe-AUROC layer plus 2-3 additional layers, with pre-T vs post-T distributions compared using a statistical test (t-test or Mann-Whitney U) and Cohen's d reported
-  4. Post-transition CoT segments classified into the Cox 2x2 framework (Sound Reasoning, Non-entailment, Confabulation, Hallucination) using an LLM evaluator, with distributions computed per dataset
-  5. All probe weights, transition points, confidence curves, and 2x2 classifications saved to the results directory for downstream use
-**Plans**: TBD
+  2. Transition points identified per trace using multiple detection methods (derivative, PELT/BinSeg, sigmoid fit), with each trace categorized as clear, no-signal, or noisy-signal
+  3. Step-wise cosine similarity S_t computed at the best-probe-AUROC layer plus 2-3 additional layers, with pre-T vs post-T distributions compared using Mann-Whitney U and Cohen's d reported
+  4. All probe weights, transition points, confidence curves, and cosine similarity dynamics saved to the results directory for downstream use
+  5. Per-dataset parquet files contain per-token probe confidence, cosine similarity, transition points, and segment labels
+**Plans**: 4 plans
 
 Plans:
-- [ ] 03-01: TBD
-- [ ] 03-02: TBD
-- [ ] 03-03: TBD
+- [x] 03-01-PLAN.md -- Dependencies (ruptures), Phase 3 config, standalone transition detection module (src/transition.py)
+- [ ] 03-02-PLAN.md -- Layer selection pilot (all 36 layers, ~100 traces, AUROC per layer, top-N selection)
+- [ ] 03-03-PLAN.md -- Full probe training (top-N layers, all traces, 5-fold CV, selectivity controls, save weights)
+- [ ] 03-04-PLAN.md -- Confidence curves, transition detection, cosine similarity, parquet assembly, QA visualization
 
 ### Phase 4: Differential Analysis and Vector Extraction
 **Goal**: Performativity vector extracted via Difference in Means between concise and performative trace clusters, validated by projection separation, with cross-dataset vector comparison, IPHR reversed pairs for bias detection, and unfaithfulness pattern classification.
@@ -250,7 +251,7 @@ Phases execute in strict numeric order: 1 -> 2 -> 2.1 -> 2.2 -> 2.3 -> 3 -> 4 ->
 | 2.1 Repo Restructure and Shared Infra Stabilization | 3/3 | Complete | 2026-02-06 |
 | 2.2 Force-Answer Transition Experiment | 2/2 | Complete | 2026-02-23 |
 | 2.3 Cross-Seed Transition Consistency | 3/3 | Complete | 2026-02-23 |
-| 3. Probing and Transition Detection | 0/TBD | Not started | - |
+| 3. Probing and Transition Detection | 1/4 | In Progress | - |
 | 4. Differential Analysis and Vector Extraction | 0/TBD | Not started | - |
 | 5. Causal Steering Validation | 0/TBD | Not started | - |
 | 6. Evaluation and Paper Outputs | 0/TBD | Not started | - |
