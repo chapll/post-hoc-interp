@@ -1,9 +1,14 @@
 """Visualization for the per-token force-answer probing experiment (Phase 2.4).
 
 Reads per-token probe results and Phase 2.2 coarse-grid results, generates:
-1. per_token_curve.png -- Full 824-point accuracy + probability curves
+1. per_token_curve.png -- Full accuracy + probability curves (per trace)
 2. comparison_overlay.png -- Per-token curves with Phase 2.2 coarse points overlaid
 3. transition_characterization.png -- Zoomed view of the transition region with metrics
+4. multi_trace_comparison.png -- Overlay of rolling-avg accuracy across all traces
+5. multi_trace_probability.png -- Overlay of rolling-avg probability across all traces
+
+Supports both single-trace (results.parquet in results_dir) and multi-trace
+(results.parquet in subdirectories) layouts.
 
 Usage:
     python scripts/plot_per_token_probe.py
@@ -120,7 +125,7 @@ def plot_comparison_overlay(df, df_coarse, output_dir):
     and coarse-grid points align properly.
 
     Args:
-        df: Per-token results dataframe (824 points).
+        df: Per-token results dataframe.
         df_coarse: Phase 2.2 coarse results filtered to the target problem.
         output_dir: Directory where comparison_overlay.png will be saved.
     """
@@ -388,11 +393,152 @@ def classify_transition_shape(tc):
 
 
 # ---------------------------------------------------------------------------
+# Plot 4 & 5: Multi-trace comparison plots
+# ---------------------------------------------------------------------------
+
+def plot_multi_trace_comparison(all_trace_data, output_dir):
+    """Overlay rolling-average accuracy curves from all traces on one figure.
+
+    Args:
+        all_trace_data: List of (problem_id, df) tuples, each df sorted by probe_position.
+        output_dir: Parent directory where multi_trace_comparison.png is saved.
+    """
+    cmap = plt.cm.tab10
+    fig, ax = plt.subplots(1, 1, figsize=(12, 6))
+
+    for i, (pid, df) in enumerate(all_trace_data):
+        color = cmap(i % 10)
+        norm_pos = df["normalized_position"].values
+        accuracy = df["correct"].astype(float).values
+        rolling_acc = pd.Series(accuracy).rolling(window=20, min_periods=1).mean().values
+        ax.plot(
+            norm_pos, rolling_acc, color=color, linewidth=2, alpha=0.85,
+            label=pid,
+        )
+
+    ax.axhline(0.5, color="gray", linestyle=":", linewidth=0.8, alpha=0.6)
+    ax.set_xlabel("Normalized Position in Thinking Block")
+    ax.set_ylabel("Rolling-Avg Accuracy (window=20)")
+    ax.set_title("Multi-Trace Per-Token Accuracy Comparison")
+    ax.set_xlim(-0.02, 1.02)
+    ax.set_ylim(-0.05, 1.05)
+    ax.legend(loc="lower right", fontsize=9)
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    out_path = os.path.join(output_dir, "multi_trace_comparison.png")
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+def plot_multi_trace_probability(all_trace_data, output_dir):
+    """Overlay rolling-average probability curves from all traces on one figure.
+
+    Args:
+        all_trace_data: List of (problem_id, df) tuples, each df sorted by probe_position.
+        output_dir: Parent directory where multi_trace_probability.png is saved.
+    """
+    cmap = plt.cm.tab10
+    fig, ax = plt.subplots(1, 1, figsize=(12, 6))
+
+    for i, (pid, df) in enumerate(all_trace_data):
+        color = cmap(i % 10)
+        norm_pos = df["normalized_position"].values
+        prob = df["correct_token_prob"].values
+        rolling_prob = pd.Series(prob).rolling(window=20, min_periods=1).mean().values
+        ax.plot(
+            norm_pos, rolling_prob, color=color, linewidth=2, alpha=0.85,
+            label=pid,
+        )
+
+    ax.axhline(0.5, color="gray", linestyle=":", linewidth=0.8, alpha=0.6)
+    ax.set_xlabel("Normalized Position in Thinking Block")
+    ax.set_ylabel("Rolling-Avg P(correct token) (window=20)")
+    ax.set_title("Multi-Trace Per-Token Probability Comparison")
+    ax.set_xlim(-0.02, 1.02)
+    ax.set_ylim(-0.05, 1.05)
+    ax.legend(loc="lower right", fontsize=9)
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    out_path = os.path.join(output_dir, "multi_trace_probability.png")
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+# ---------------------------------------------------------------------------
+# Single-trace processing helper
+# ---------------------------------------------------------------------------
+
+def process_single_trace(trace_dir, phase22_dir):
+    """Load results for a single trace and generate its 3 plots.
+
+    Args:
+        trace_dir: Directory containing results.parquet and results_summary.json.
+        phase22_dir: Directory containing Phase 2.2 results for comparison overlay.
+
+    Returns:
+        Tuple of (problem_id, df, summary) or None if loading fails.
+    """
+    parquet_path = os.path.join(trace_dir, "results.parquet")
+    if not os.path.isfile(parquet_path):
+        print(f"WARNING: results.parquet not found in {trace_dir}", file=sys.stderr)
+        return None
+
+    df = pd.read_parquet(parquet_path)
+    df = df.sort_values("probe_position").reset_index(drop=True)
+    problem_id = df["problem_id"].iloc[0]
+    print(f"Loaded {len(df)} per-token probe results for {problem_id}")
+
+    # Load Phase 2.2 coarse results (optional)
+    df_coarse = None
+    phase22_parquet = os.path.join(phase22_dir, "results.parquet")
+    if os.path.isfile(phase22_parquet):
+        df_coarse_all = pd.read_parquet(phase22_parquet)
+        df_coarse = df_coarse_all[
+            df_coarse_all["problem_id"] == problem_id
+        ].sort_values("probe_position").reset_index(drop=True)
+        if len(df_coarse) > 0:
+            print(f"  Phase 2.2 coarse results: {len(df_coarse)} points")
+        else:
+            df_coarse = None
+            print(f"  No Phase 2.2 data for {problem_id}")
+
+    # Load JSON summary
+    summary_path = os.path.join(trace_dir, "results_summary.json")
+    if not os.path.isfile(summary_path):
+        print(f"WARNING: results_summary.json not found in {trace_dir}", file=sys.stderr)
+        return None
+
+    with open(summary_path) as f:
+        summary = json.load(f)
+
+    # Generate per-trace plots
+    os.makedirs(trace_dir, exist_ok=True)
+
+    # Plot 1: per_token_curve.png
+    plot_per_token_curve(df, trace_dir)
+
+    # Plot 2: comparison_overlay.png (only if Phase 2.2 data available)
+    if df_coarse is not None and len(df_coarse) > 0:
+        plot_comparison_overlay(df, df_coarse, trace_dir)
+    else:
+        print(f"  Skipped comparison_overlay.png (no Phase 2.2 data for {problem_id})")
+
+    # Plot 3: transition_characterization.png
+    plot_transition_characterization(df, summary, trace_dir)
+
+    return (problem_id, df, summary)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 def main():
-    """Parse arguments, load results, generate all plots, print summary."""
+    """Parse arguments, discover traces, generate per-trace + multi-trace plots."""
     parser = argparse.ArgumentParser(
         description="Visualize per-token force-answer probing results (Phase 2.4).",
     )
@@ -418,78 +564,69 @@ def main():
     phase22_dir = args.phase22_dir
 
     # ------------------------------------------------------------------
-    # 1. Load per-token results
+    # 1. Discover trace directories
     # ------------------------------------------------------------------
-    parquet_path = os.path.join(results_dir, "results.parquet")
-    if not os.path.isfile(parquet_path):
-        print(f"ERROR: results.parquet not found at {parquet_path}", file=sys.stderr)
-        print("Run the experiment first:", file=sys.stderr)
-        print("  python scripts/per_token_probe.py --config configs/per_token_probe.yaml", file=sys.stderr)
+    direct_parquet = os.path.join(results_dir, "results.parquet")
+    if os.path.isfile(direct_parquet):
+        # Single-trace mode (backward compat)
+        trace_dirs = [("", results_dir)]
+    else:
+        # Multi-trace mode: discover subdirs
+        trace_dirs = []
+        if os.path.isdir(results_dir):
+            for entry in sorted(os.listdir(results_dir)):
+                subdir = os.path.join(results_dir, entry)
+                if os.path.isdir(subdir) and os.path.isfile(os.path.join(subdir, "results.parquet")):
+                    trace_dirs.append((entry, subdir))
+        if not trace_dirs:
+            print(f"ERROR: No results.parquet found in {results_dir} or subdirs", file=sys.stderr)
+            sys.exit(1)
+
+    print(f"Discovered {len(trace_dirs)} trace(s) to plot")
+
+    # ------------------------------------------------------------------
+    # 2. Process each trace (generate per-trace plots)
+    # ------------------------------------------------------------------
+    all_trace_data = []  # (problem_id, df) tuples for multi-trace comparison
+
+    for name, trace_dir in trace_dirs:
+        result = process_single_trace(trace_dir, phase22_dir)
+        if result is not None:
+            pid, df, summary = result
+            all_trace_data.append((pid, df, summary))
+
+    if not all_trace_data:
+        print("ERROR: No traces were processed successfully", file=sys.stderr)
         sys.exit(1)
 
-    df = pd.read_parquet(parquet_path)
-    df = df.sort_values("probe_position").reset_index(drop=True)
-    print(f"Loaded {len(df)} per-token probe results from {parquet_path}")
+    # ------------------------------------------------------------------
+    # 3. Multi-trace comparison plots (if 2+ traces)
+    # ------------------------------------------------------------------
+    if len(all_trace_data) >= 2:
+        trace_data_for_plot = [(pid, df) for pid, df, _ in all_trace_data]
+        plot_multi_trace_comparison(trace_data_for_plot, results_dir)
+        plot_multi_trace_probability(trace_data_for_plot, results_dir)
 
     # ------------------------------------------------------------------
-    # 2. Load Phase 2.2 coarse results and filter to target trace
+    # 4. Console summary table
     # ------------------------------------------------------------------
-    phase22_parquet = os.path.join(phase22_dir, "results.parquet")
-    if not os.path.isfile(phase22_parquet):
-        print(f"WARNING: Phase 2.2 results not found at {phase22_parquet}", file=sys.stderr)
-        print("  Comparison overlay will be skipped.", file=sys.stderr)
-        df_coarse = None
-    else:
-        df_coarse_all = pd.read_parquet(phase22_parquet)
-        problem_id = df["problem_id"].iloc[0]
-        df_coarse = df_coarse_all[
-            df_coarse_all["problem_id"] == problem_id
-        ].sort_values("probe_position").reset_index(drop=True)
-        print(f"Loaded Phase 2.2 coarse results: {len(df_coarse)} points for {problem_id}")
+    print()
+    print("=== Multi-Trace Summary ===")
+    print(f"{'problem_id':<45} {'think_len':>10} {'accuracy':>10} {'shape':>15}")
+    print("-" * 82)
 
-    # ------------------------------------------------------------------
-    # 3. Load JSON summary for transition characterization
-    # ------------------------------------------------------------------
-    summary_path = os.path.join(results_dir, "results_summary.json")
-    if not os.path.isfile(summary_path):
-        print(f"ERROR: results_summary.json not found at {summary_path}", file=sys.stderr)
-        sys.exit(1)
-
-    with open(summary_path) as f:
-        summary = json.load(f)
-    tc = summary["transition_characterization"]
-
-    # ------------------------------------------------------------------
-    # 4. Generate plots
-    # ------------------------------------------------------------------
-    os.makedirs(results_dir, exist_ok=True)
-
-    # Plot 1: per_token_curve.png
-    plot_per_token_curve(df, results_dir)
-
-    # Plot 2: comparison_overlay.png (only if Phase 2.2 data available)
-    if df_coarse is not None and len(df_coarse) > 0:
-        plot_comparison_overlay(df, df_coarse, results_dir)
-    else:
-        print("Skipped comparison_overlay.png (no Phase 2.2 data)")
-
-    # Plot 3: transition_characterization.png
-    plot_transition_characterization(df, summary, results_dir)
-
-    # ------------------------------------------------------------------
-    # 5. Console summary
-    # ------------------------------------------------------------------
-    shape = classify_transition_shape(tc)
-    n_coarse = len(df_coarse) if df_coarse is not None else 0
+    for pid, df, summary in all_trace_data:
+        tc = summary["transition_characterization"]
+        shape = classify_transition_shape(tc)
+        think_len = summary.get("think_length", len(df))
+        acc = summary.get("overall_accuracy", df["correct"].mean())
+        print(f"{pid:<45} {think_len:>10} {acc:>9.1%} {shape:>15}")
 
     print()
-    print("=== Per-Token Probe Visualization ===")
-    print(f"Problem: {df['problem_id'].iloc[0]}")
-    print(f"Positions: {len(df)}")
-    print(f"Overall accuracy: {summary['overall_accuracy']:.1%}")
-    print(f"Transition shape: {shape}")
-    print(f"Phase 2.2 had {n_coarse} points, per-token has {len(df)}")
     print(f"Plots saved to: {results_dir}")
+    if len(all_trace_data) >= 2:
+        print(f"  + multi_trace_comparison.png")
+        print(f"  + multi_trace_probability.png")
 
 
 if __name__ == "__main__":
