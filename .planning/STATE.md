@@ -12,14 +12,14 @@ See: .planning/PROJECT.md (updated 2026-02-04)
 Phase: 2.3 of 6 (Cross-Seed Transition Consistency)
 Plan: 3 of 3 (visualization + metrics) -- PHASE COMPLETE
 Status: Phase 2.3 complete
-Last activity: 2026-02-26 -- Completed quick task 004 (condense milestone to 2 pages)
+Last activity: 2026-02-26 -- Completed quick task 005 (no-think baseline filter script)
 
 Progress: [###########-] ~55%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 22 (19 phase plans + 3 quick tasks)
+- Total plans completed: 23 (19 phase plans + 4 quick tasks)
 - Average duration: 5min
 - Total execution time: ~2.2 hours
 
@@ -96,6 +96,8 @@ Recent decisions affecting current work:
 - **21-point interpolation grid** (np.linspace(0, 1, 21)) for cross-seed curve comparison
 - **Sharpness = max absolute slope of mean accuracy curve** (max of |np.diff / np.diff(grid)|)
 - **No formal transition point detection** -- raw data visualization per locked decision
+- **Inlined extract_answer/extract_rho_tau_probs in no_think_baseline.py** -- avoids cross-script import complexity for ~60 lines of self-contained logic
+- **Config A only for no-think baseline** -- baseline filter only needs correctness, not both label mappings
 
 ### Roadmap Evolution
 
@@ -123,10 +125,11 @@ Recent decisions affecting current work:
 | 001 | Flatten src/infra/ into src/ | 2026-02-18 | 62e26e1 | [001-move-src-infra-contents-to-src](./quick/001-move-src-infra-contents-to-src/) |
 | 002 | Move data to DATA_DIR, env-var config paths | 2026-02-18 | 4ac6096 | [002-move-data-to-data-dir](./quick/002-move-data-to-data-dir/) |
 | 003 | Write CS224N milestone report draft | 2026-02-26 | bf181ac | [003-write-milestone-report-drafts](./quick/003-write-milestone-report-drafts/) |
-| 004 | Condense milestone to ~2 pages | 2026-02-26 | pending | [004-condense-milestone-to-2-pages](./quick/004-condense-milestone-to-2-pages/) |
+| 004 | Condense milestone to ~2 pages | 2026-02-26 | 66ab174 | [004-condense-milestone-to-2-pages](./quick/004-condense-milestone-to-2-pages/) |
+| 005 | No-think baseline filter script | 2026-02-26 | e156946 | [005-no-think-baseline-filter](./quick/005-no-think-baseline-filter/) |
 
 ## Session Continuity
 
 Last session: 2026-02-26
-Stopped at: Completed quick task 004 (condensed milestone). paper/milestone.tex rewritten from 319 to 105 lines (~2 pages). Next: Phase 3 (probing and transition detection).
+Stopped at: Completed quick task 005 (no-think baseline filter). scripts/no_think_baseline.py + configs/no_think_baseline.yaml ready for GPU execution. Next: run no-think baseline on cluster, then Phase 3.
 Resume file: None
