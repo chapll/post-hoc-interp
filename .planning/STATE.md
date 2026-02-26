@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-04)
 
 **Core value:** Identify the exact internal transition point where Qwen3-8B shifts from "searching" to "knowing" the answer, and provide mechanistic causal evidence that post-transition tokens are performative.
-**Current focus:** Phase 3 (Probing and Transition Detection) in progress. Foundation artifacts (transition detection module, config) complete. Probe training pipeline next.
+**Current focus:** Phase 3 (Probing and Transition Detection) in progress. Foundation artifacts and layer selection pilot complete. Full probe training next.
 
 ## Current Position
 
 Phase: 3 of 6 (Probing and Transition Detection)
-Plan: 1 of 4 (foundation artifacts) -- COMPLETE
+Plan: 2 of 4 (layer selection pilot) -- COMPLETE
 Status: Phase 3 in progress
-Last activity: 2026-02-26 -- Completed 03-01-PLAN.md (foundation artifacts)
+Last activity: 2026-02-26 -- Completed 03-02-PLAN.md (layer selection pilot)
 
-Progress: [############-] ~60%
+Progress: [#############-] ~63%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 22 (20 phase plans + 2 quick tasks)
+- Total plans completed: 23 (21 phase plans + 2 quick tasks)
 - Average duration: 5min
-- Total execution time: ~2.2 hours
+- Total execution time: ~2.3 hours
 
 **By Phase:**
 
@@ -32,11 +32,11 @@ Progress: [############-] ~60%
 | 02.1-repo-restructure | 3/3 | 12min | 4min | Complete |
 | 02.2-force-answer-experiment | 2/2 | 16min | 8min | Complete |
 | 02.3-cross-seed-consistency | 3/3 | 14min | 4.7min | Complete |
-| 03-probing-and-transition-detection | 1/4 | 6min | 6min | In Progress |
+| 03-probing-and-transition-detection | 2/4 | 11min | 5.5min | In Progress |
 
 **Recent Trend:**
-- Last 5 plans: 02.3-01 (5min), 02.3-02 (4min), 02.3-03 (5min), 03-01 (6min)
-- Trend: Steady execution, foundation/infrastructure plans averaging ~6 min
+- Last 5 plans: 02.3-02 (4min), 02.3-03 (5min), 03-01 (6min), 03-02 (5min)
+- Trend: Steady execution, averaging ~5 min per plan
 
 *Updated after each plan completion*
 
@@ -100,6 +100,10 @@ Recent decisions affecting current work:
 - **Four detection methods run independently** on every curve; best method chosen after seeing real data (derivative, PELT, BinSeg, sigmoid)
 - **Primary sigmoid R2 threshold is 0.85** (median of sweep range [0.75, 0.80, 0.85, 0.90, 0.95])
 - **Graceful degradation for short signals** in ruptures methods (BinSeg/PELT) -- log warning and return noisy-signal/no-signal instead of crashing
+- **Chunked extraction 12 layers per nnsight pass** for pilot (3 passes for 36 layers), Pre-Handoff Window only stored in RAM
+- **Top-N layer selection strategy**: best layer + 2 above + 2 below + 1 early layer (< layer 8), fill by AUROC rank
+- **Per-layer random seed offset** (137 + layer_idx) for selectivity control reproducibility
+- **Model freed from GPU before probe training** to maximize VRAM for training data
 
 ### Roadmap Evolution
 
@@ -130,5 +134,5 @@ Recent decisions affecting current work:
 ## Session Continuity
 
 Last session: 2026-02-26
-Stopped at: Completed 03-01-PLAN.md (foundation artifacts). Transition detection module and Phase 3 config ready. Next: 03-02 (layer selection pilot and probe training).
+Stopped at: Completed 03-02-PLAN.md (layer selection pilot). Script ready to run on GPU. Next: 03-03 (full probe training at selected layers).
 Resume file: None
