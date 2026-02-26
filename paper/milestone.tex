@@ -52,7 +52,17 @@ Following \citet{cox2025posthoc}, we will train logistic regression probes on re
 \section{Experiments}
 
 \paragraph{Data.}
-Three datasets converted to binary verification with 50/50 True/False balance: \textbf{GSM-Symbolic} \citep{gsmsymbolic} (math, fresh HF instances to avoid contamination), \textbf{FOLIO} \citep{folio} (first-order logic), and \textbf{StrategyQA} \citep{strategyqa} (world knowledge). ${\sim}300$ problems total, expanded to ${\sim}2400$ traces via swapped-label protocol (2 configs $\times$ 3 traces/problem). Cross-seed subset: 20 traces/problem for ${\sim}41$ problems.
+We evaluate on three datasets spanning distinct reasoning modalities, each converted to binary verification with 50/50 True/False balance and the swapped-label protocol (${\sim}300$ problems total, ${\sim}2400$ traces via 2 configs $\times$ 3 traces/problem; cross-seed subset: 20 traces/problem for ${\sim}41$ problems):
+
+\begin{itemize}
+  \item \textbf{GSM-Symbolic} \citep{gsmsymbolic}: Grade-school math verification. We use HuggingFace's pre-generated symbolic variants with fresh numerical values, making problems resistant to training-data memorization. Each asks ``Is the answer $X$?'' with plausible close-perturbation distractors (e.g., 100 vs.\ 98). Math reasoning is sequential and compositional, so we expect later transitions as the model must compute intermediate steps before converging on the answer.
+
+  \item \textbf{FOLIO} \citep{folio}: First-order logic verification with natural-language premises and conclusions. Problems require formal deductive reasoning (universal/existential quantification, negation, conjunction) rather than world knowledge, providing a controlled test of whether transitions differ for logical vs.\ empirical reasoning. Binary True/False judgments on whether conclusions follow from premises.
+
+  \item \textbf{StrategyQA} \citep{strategyqa}: Multi-hop world knowledge verification requiring implicit decomposition of yes/no questions into sub-questions (e.g., ``Did Aristotle use a laptop?'' requires reasoning about Aristotle's era and laptop invention dates). Unlike GSM-Symbolic and FOLIO, answers depend on parametric knowledge retrieval rather than in-context computation, so we expect earlier transitions if the model retrieves the answer before explicitly reasoning.
+\end{itemize}
+
+The 50/50 True/False balance with plausible distractors prevents probes from learning sycophancy bias (always agreeing with the user's suggestion).
 
 \paragraph{Evaluation.}
 Current metrics: force-answer accuracy at each probe position, transition sharpness, cross-seed Spearman correlation. Planned: probe AUROC per layer, token reduction ratio ($1 - T_i/n$), steering success rate, answer preservation rate.
