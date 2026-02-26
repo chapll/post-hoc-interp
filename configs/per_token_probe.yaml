@@ -1,0 +1,31 @@
+# Per-token dense probing experiment config
+# Merges on top of base.yaml via load_config("configs/per_token_probe.yaml")
+#
+# Probes every thinking token position (824 total) for a single target trace,
+# extending the ~20-point grid from Phase 2.2 to full per-token resolution.
+
+per_token_probe:
+  # Target trace
+  problem_id: "gsm_symbolic_68_fresh_false_cfga"
+  dataset: "gsm_symbolic"
+  trace_index: 0                  # use trace_00
+  expected_think_length: 824      # for validation assertion
+
+  # Probing parameters
+  num_probes: 824                 # probe every position
+  min_probe_spacing: 1            # CRITICAL: must be 1 to get all 824 positions
+  max_new_tokens: 15              # same as Phase 2.2/2.3
+
+  # Memory management
+  empty_cache_interval: 100       # call torch.cuda.empty_cache() every N probes
+
+  # Token IDs (same as Phase 2.2/2.3)
+  close_token_ids: [151668, 198]  # </think> + \n
+  rho_token_ids: [49, 6161]       # "R" + "ho"
+  tau_token_id: 92713             # single token
+
+paths:
+  traces_dir: "${paths.data_dir}/traces"
+  output_dir: "${oc.env:EXP_DIR}/per_token_probe"
+
+gpus: [0]
