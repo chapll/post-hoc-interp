@@ -10,23 +10,14 @@
 \usepackage{booktabs}
 \usepackage{caption}
 \usepackage{subcaption}
-\usepackage{algorithm}
-\usepackage{algpseudocode}
-\usepackage{xcolor}
 
-\hypersetup{
-  colorlinks=true,
-  linkcolor=blue,
-  citecolor=blue,
-  urlcolor=blue,
-}
+\hypersetup{colorlinks=true, linkcolor=blue, citecolor=blue, urlcolor=blue}
 
 % --- Title ---
 \title{Mechanistic Detection of Performative Reasoning in Chain-of-Thought}
 \author{
   Ali Ahmad \quad Gorn Namchittai \quad Eric Cui \\
-  Stanford University \\
-  CS224N: Natural Language Processing with Deep Learning \\
+  Stanford University, CS224N \\
   \texttt{\{aahmad, gnamchit, ecui\}@stanford.edu}
 }
 \date{\today}
@@ -35,283 +26,78 @@
 \maketitle
 
 % ===================================================================
-% ABSTRACT
-% ===================================================================
 \begin{abstract}
-Large reasoning models such as Qwen3-8B generate extended chain-of-thought (CoT) traces when solving problems, but it remains unclear whether all reasoning tokens are causally necessary for reaching the correct answer or whether some constitute performative post-hoc rationalization generated after the model has internally ``decided'' the answer. We develop a mechanistic interpretability pipeline to detect the internal transition point where Qwen3-8B shifts from ``searching'' to ``knowing,'' providing both correlational and causal evidence for performative reasoning. Our methodology introduces three contributions: (1) a \emph{swapped-label protocol} using Rho/Tau tokens instead of Yes/No to eliminate surface-token confounds in probing, (2) \emph{force-answer transition probing} that truncates thinking at controlled positions and forces the model to answer, revealing accuracy-vs-position sigmoid curves, and (3) \emph{cross-seed consistency analysis} probing 20 independent traces per problem to assess whether detected transitions are robust model properties rather than stochastic artifacts. We have completed the full pipeline infrastructure including trace generation (${\sim}2400$ traces across three datasets), force-answer probing scripts with KV-cache-efficient truncation, and cross-seed consistency analysis scripts. GPU execution of experiments is pending. Future work includes linear probing with a ``Train-on-End, Test-on-Middle'' protocol, performativity vector extraction via Difference in Means, and causal steering validation.
+Large reasoning models generate extended chain-of-thought (CoT), but it is unclear whether all tokens are causally necessary or whether some are performative post-hoc rationalization. We develop a pipeline to detect the internal transition where Qwen3-8B \citep{qwen3} shifts from ``searching'' to ``knowing'' the answer. Our contributions include: (1) a \emph{swapped-label protocol} (Rho/Tau tokens) eliminating surface-token confounds in probing, (2) \emph{force-answer probing} that truncates thinking at controlled positions to reveal accuracy-vs-position transition curves, and (3) \emph{cross-seed consistency analysis} over 20 traces per problem. Infrastructure is complete (${\sim}2400$ traces across three datasets); GPU execution is pending. Future work includes linear probing, performativity vector extraction, and causal steering validation.
 \end{abstract}
 
 % ===================================================================
-% SECTION 1: APPROACH
-% ===================================================================
 \section{Approach}
 
-\subsection{Research Question and Motivation}
+\paragraph{Motivation.}
+\citet{cox2025posthoc} showed that probing the residual stream at the last prompt token---before any CoT---already reveals the model's answer. \citet{arcuschin2025cot} documented unfaithful CoT patterns including fact manipulation and argument switching. We extend these findings by probing the \emph{entire reasoning trace} to identify the exact token position $T_i$ where the model transitions from searching to knowing, and by planning causal steering experiments to establish that post-$T_i$ tokens are genuinely performative.
 
-Recent work has revealed that large language models may encode answers before completing their reasoning chains. \citet{cox2025posthoc} demonstrated that probing the residual stream at the \emph{last prompt token}---before any chain-of-thought tokens are generated---already reveals the model's eventual answer with high confidence. This suggests that much of the subsequent reasoning may be performative rather than causally necessary. Separately, \citet{arcuschin2025cot} showed that chain-of-thought reasoning ``in the wild'' is not always faithful, documenting patterns of fact manipulation, argument switching, and answer flipping.
+\paragraph{Swapped-Label Protocol (Original).}
+Standard Yes/No verification creates a confound: probes may detect surface mentions of ``Yes''/``No'' in reasoning rather than abstract validity. We replace output tokens with semantically neutral Rho/Tau under two configs (A: Valid$\mapsto$Rho, B: Valid$\mapsto$Tau). With both in training data, $P(o{=}\text{Rho} \mid g{=}\text{Yes}) = P(o{=}\text{Rho} \mid g{=}\text{No}) = 0.5$, forcing probes to learn the abstract signal.
 
-We extend Cox's approach from a single probe point (the last prompt token) to the \emph{entire reasoning trace}, aiming to identify the exact emergence point $T_i$ where the model transitions from ``searching'' to ``knowing'' the answer. Our central research question is:
+\paragraph{Force-Answer Probing (Original).}
+Given thinking tokens $t_1, \ldots, t_n$, we truncate at position $k$, append \texttt{</think>}, and let the model generate its answer. We probe ${\sim}20$ evenly-spaced positions per trace, recording (a) correctness, (b) logit rank of the correct token, and (c) its probability. We use \texttt{DynamicCache.crop()} for KV-cache-efficient probing in descending position order. We expect accuracy-vs-position sigmoid curves revealing the transition.
 
-\begin{quote}
-\emph{Is there a sharp internal transition from ``searching'' to ``knowing'' during chain-of-thought reasoning, and are tokens generated after this transition causally unnecessary for the final answer?}
-\end{quote}
+\paragraph{Cross-Seed Consistency (Original).}
+A single-trace transition could be a stochastic artifact. For ${\sim}41$ problems, we generate 20 traces with different seeds and probe all of them. Curves are interpolated to a common 21-point grid. We measure per-problem \emph{sharpness} (max slope of mean accuracy), \emph{position-wise variance}, and \emph{pairwise Spearman correlation} across seeds.
 
-The distinction between correlational and causal evidence is critical. Probes and force-answer experiments provide correlational evidence that the model's internal state encodes the answer before reasoning concludes. Causal evidence---that post-transition tokens are genuinely performative---requires activation steering experiments that manipulate the model's internal state and observe behavioral changes (Sections~\ref{sec:steering} and~\ref{sec:future}).
+\paragraph{Planned: Linear Probing and Causal Steering.}
+Following \citet{cox2025posthoc}, we will train logistic regression probes on residual stream activations from the 3 tokens before the final \texttt{</think>} (``Train-on-End''), then apply to all intermediate positions (``Test-on-Middle'') to get per-token confidence curves. Transition point $T_i$: first position with sustained confidence $>0.95$ for $K{=}5$ tokens. For causal evidence, we will extract a performativity vector $v_{\text{perf}}$ via Difference in Means between concise and verbose trace clusters, then steer with $\pm\alpha \cdot v_{\text{perf}}$ ($\alpha \in [-8, +8]$) using nnsight \citep{nnsight} hooks. Controls: random-vector and sham interventions. Baselines: entropy-based detection, greedy pruning, random/midpoint.
 
-We study Qwen3-8B \citep{qwen3}, a reasoning model with an explicit ``Unified Thinking Mode'' that generates structured \texttt{<think>}...\texttt{</think>} blocks, making it an ideal subject for studying allocated reasoning budget.
-
-\subsection{Swapped-Label Protocol}
-\label{sec:swapped-label}
-
-A fundamental challenge in probing verification tasks is the \emph{surface-token confound}: when models answer with ``Yes'' or ``No,'' linear probes may detect hypothetical mentions of these tokens within the reasoning chain rather than the model's abstract validity judgment. For example, a reasoning trace might contain ``...the answer is clearly Yes because...'' before the model outputs its final answer, and a probe could learn to detect the string ``Yes'' rather than the underlying logical assessment.
-
-\paragraph{Solution.} We introduce a swapped-label protocol that replaces the standard Yes/No output tokens with the semantically neutral tokens Rho ($\rho$) and Tau ($\tau$). Each verification problem is generated under two complementary label mappings:
-\begin{itemize}
-  \item \textbf{Config A:} Valid $\mapsto$ Rho, Invalid $\mapsto$ Tau
-  \item \textbf{Config B:} Valid $\mapsto$ Tau, Invalid $\mapsto$ Rho
-\end{itemize}
-
-With both configurations present in the training data for downstream probes, the output tokens $o \in \{\text{Rho}, \text{Tau}\}$ have zero marginal correlation with the abstract validity label $g \in \{\text{Yes}, \text{No}\}$:
-\begin{equation}
-  P(o = \text{Rho} \mid g = \text{Yes}) = P(o = \text{Rho} \mid g = \text{No}) = 0.5
-  \label{eq:swapped-label}
-\end{equation}
-
-This forces any linear probe to learn the abstract validity signal from the residual stream rather than detecting surface token patterns. We retain the \texttt{ground\_truth} field (Yes/No) as the abstract validity label; only the output tokens change. The protocol is implemented in our \texttt{prompts.py} module, which constructs verification prompts using a \texttt{LABEL\_MAPPINGS} dictionary that maps config identifiers to token assignments.
-
-Each prompt instructs the model: ``If [the statement is correct], output exactly the word: [valid\_token]. If [it is not correct], output exactly the word: [invalid\_token]. Please think step-by-step to verify.'' The valid and invalid tokens are Rho and Tau (or vice versa depending on config), and the model generates its reasoning chain ending with one of these tokens.
-
-\subsection{Force-Answer Transition Probing}
-\label{sec:force-answer}
-
-Our primary method for detecting the searching-to-knowing transition is \emph{force-answer probing}: given a reasoning trace with thinking tokens $t_1, t_2, \ldots, t_n$ between \texttt{<think>} and \texttt{</think>}, we truncate at position $k$, append the close sequence \texttt{</think>}\textbackslash n, and let the model freely generate its answer.
-
-\paragraph{Procedure.} For each trace, we select approximately 20 evenly-spaced probe positions within the thinking block (minimum spacing of 5 tokens to avoid redundancy). At each probe position $k$:
-\begin{enumerate}
-  \item Construct the input: all tokens up to and including \texttt{<think>}, followed by thinking content tokens $t_1, \ldots, t_k$, followed by the force-close sequence [\texttt{</think>}, \texttt{\textbackslash n}].
-  \item Generate up to 15 new tokens with greedy decoding.
-  \item Record: (a) whether the generated answer matches ground truth via dual matching (token-level and string-level), (b) the logit rank of the correct answer token at the first generation step, and (c) the softmax probability of the correct answer token.
-\end{enumerate}
-
-\paragraph{KV-Cache Optimization.} Naive implementation would require $O(20 \cdot n)$ total tokens of forward-pass computation per trace. We exploit the observation that all probe points share a common prefix by using the HuggingFace \texttt{DynamicCache}. We prefill the KV cache with the full input sequence, then process probes in \emph{descending} position order, using \texttt{DynamicCache.crop()} to truncate the cache to each probe point's length. Before generation at each probe point, we \texttt{deepcopy} the cropped cache to preserve state for subsequent probes. This reduces amortized complexity to $O(n + 20 \cdot m)$ where $m$ is the maximum generation length (15 tokens).
-
-\paragraph{Dual Answer Matching.} We use both token-level and string-level matching to determine the model's answer. Token-level matching scans generated token IDs for the first occurrence of the Rho token pair (IDs 49 + 6161) or the Tau token (ID 92713). String-level matching checks for ``rho'' or ``tau'' in the decoded text. Disagreements between methods are flagged. This guards against tokenization edge cases where the model produces the correct answer string through an unexpected token decomposition.
-
-\paragraph{Expected Output.} For traces where the model eventually reaches the correct answer, we expect the accuracy-vs-position curve to exhibit a sigmoid shape: low accuracy (${\sim}0.5$, i.e., random) at early positions where the model has not yet ``found'' the answer, transitioning sharply to high accuracy (${\sim}1.0$) at later positions. The transition point and sharpness of this sigmoid characterize the searching-to-knowing transition for each trace.
-
-\subsection{Cross-Seed Consistency Analysis}
-\label{sec:cross-seed}
-
-A transition detected in a single trace could be a stochastic artifact of the particular generation path. To assess whether transitions are robust properties of the model's reasoning process, we analyze cross-seed consistency.
-
-\paragraph{Method.} For each of approximately 41 originally-correct problems (selected via proportional sampling with seed 137), we generate 20 traces with different random seeds (temperature 0.6, top-$p$ 0.95, top-$k$ 20). Three traces per problem already exist from Phase 2 trace generation (indices 0--2); we generate 17 additional traces (indices 3--19). All 20 traces per problem are probed at approximately 20 positions each, yielding roughly 16,400 total probe measurements.
-
-\paragraph{Interpolation.} Since different traces have different thinking-block lengths, we map each trace's accuracy curve to a common 21-point normalized grid via linear interpolation on $[0, 1]$ (corresponding to \texttt{np.linspace(0, 1, 21)}). This enables pointwise comparison across seeds.
-
-\paragraph{Metrics.} We compute three per-problem agreement metrics:
-\begin{enumerate}
-  \item \textbf{Sharpness}: the maximum absolute slope of the mean accuracy curve across seeds, computed as $\max_{i} \left| \frac{\Delta \bar{a}_i}{\Delta x_i} \right|$ where $\bar{a}_i$ is the mean accuracy at grid point $i$. Higher sharpness indicates a crisper transition.
-  \item \textbf{Position-wise variance}: the variance of accuracy across seeds at each grid point, averaged across positions. Lower variance indicates higher cross-seed agreement.
-  \item \textbf{Pairwise Spearman correlation}: the mean Spearman rank correlation between all $\binom{20}{2} = 190$ pairs of seed curves. Higher correlation indicates that seeds traverse the transition in a similar order.
-\end{enumerate}
-
-If transitions are a genuine property of the model rather than stochastic artifacts, we expect high sharpness, low position-wise variance around the transition region, and high pairwise Spearman correlations.
-
-\subsection{Planned: Linear Probing with ``Train-on-End, Test-on-Middle''}
-\label{sec:probing}
-
-Following \citet{cox2025posthoc}, we plan to train logistic regression probes on residual stream activations, but with a crucial extension: instead of probing only at the last prompt token, we apply probes to every intermediate token across the full reasoning trace.
-
-\paragraph{Training Protocol.} For each of the 36 layers in Qwen3-8B, we train a single logistic regression probe on the \emph{Pre-Handoff Window}---the 3 natural language tokens immediately preceding the final \texttt{</think>} token in correct traces. At this position, the model's residual stream should contain a clean representation of the answer state (the ``Platonic Ideal'' of having solved the problem). The probe's target label is the abstract validity (\texttt{ground\_truth}: Yes/No), not the output token (Rho/Tau), thanks to the swapped-label protocol (Section~\ref{sec:swapped-label}).
-
-\paragraph{Inference Protocol.} The fixed probe is applied to every intermediate token position within the \texttt{<think>}...\texttt{</think>} block, producing a per-position confidence curve. The transition point $T_i$ is defined as the first position where probe confidence consistently exceeds 0.95 for $K = 5$ consecutive positions.
-
-\paragraph{Selectivity Control.} To guard against spurious correlations (a known risk with $d = 4096$ dimensional activations and $n \approx 1500$ training samples), we train random-label control probes using identical procedure but with shuffled labels. A warning is raised if any control probe achieves AUROC $> 0.60$.
-
-\subsection{Planned: Causal Steering}
-\label{sec:steering}
-
-Force-answer probing and linear probes provide \emph{correlational} evidence for performative reasoning. To establish \emph{causal} evidence, we plan to extract a \emph{performativity vector} and validate it through activation steering.
-
-\paragraph{Vector Extraction.} We extract $v_{\text{perf}}$ via Difference in Means between two clusters of traces aligned at detected transition points $T_i$: \emph{concise} traces (short post-$T_i$ generation, below median) and \emph{performative} traces (long post-$T_i$ generation, above median). The vector captures the direction in activation space that distinguishes active reasoning from performative continuation.
-
-\paragraph{Steering Protocol.} Using nnsight \citep{nnsight} hooks, we inject $+\alpha \cdot v_{\text{perf}}$ into concise traces (predicted to induce unnecessary verbosity) and $-\alpha \cdot v_{\text{perf}}$ into verbose traces (predicted to induce early termination). Alpha is swept from $-8$ to $+8$ to produce dose-response curves.
-
-\paragraph{Controls.}
-\begin{itemize}
-  \item \textbf{Random-vector control}: same $\ell_2$ norm, random direction. Validates that the specific direction of $v_{\text{perf}}$, not just any perturbation, produces predicted effects.
-  \item \textbf{Sham control}: patching from same-answer traces (replacing activations with those from a trace that produces the same final answer). Validates that observed effects are not artifacts of the patching procedure.
-\end{itemize}
-
-This extends Cox's probe-weight steering to a data-driven performativity direction extracted from the model's own activation geometry.
-
-\subsection{Baselines}
-\label{sec:baselines}
-
-We compare our probe-based transition detection against three baselines:
-\begin{enumerate}
-  \item \textbf{Entropy-based detection}: compute token-level entropy from logits at each position; transition defined as sustained entropy drop below a threshold.
-  \item \textbf{Greedy pruning}: iteratively remove tokens from the end of the thinking block and test whether the model still produces the correct answer; the last token whose removal changes the answer defines the transition.
-  \item \textbf{Random and midpoint baselines}: assign transition points uniformly at random or at the midpoint of the thinking block.
-\end{enumerate}
-
-% ===================================================================
-% SECTION 2: EXPERIMENTS
 % ===================================================================
 \section{Experiments}
 
-\subsection{Data}
+\paragraph{Data.}
+Three datasets converted to binary verification with 50/50 True/False balance: \textbf{GSM-Symbolic} \citep{gsmsymbolic} (math, fresh HF instances to avoid contamination), \textbf{FOLIO} \citep{folio} (first-order logic), and \textbf{StrategyQA} \citep{strategyqa} (world knowledge). ${\sim}300$ problems total, expanded to ${\sim}2400$ traces via swapped-label protocol (2 configs $\times$ 3 traces/problem). Cross-seed subset: 20 traces/problem for ${\sim}41$ problems.
 
-We evaluate on three datasets spanning different reasoning modalities, each converted to binary verification format with balanced True/False labels:
+\paragraph{Evaluation.}
+Current metrics: force-answer accuracy at each probe position, transition sharpness, cross-seed Spearman correlation. Planned: probe AUROC per layer, token reduction ratio ($1 - T_i/n$), steering success rate, answer preservation rate.
 
-\begin{itemize}
-  \item \textbf{GSM-Symbolic} \citep{gsmsymbolic}: Mathematical verification. We use fresh instances from HuggingFace (\texttt{apple/GSM-Symbolic}) to mitigate training data contamination. Each problem asks ``Is the answer $X$?'' where $X$ is the correct answer 50\% of the time and a plausible distractor (close perturbation, e.g., 100 vs.\ 98) 50\% of the time.
-  \item \textbf{FOLIO} \citep{folio}: Logical verification with first-order logic premises from HuggingFace (\texttt{yale-nlp/FOLIO}). Each problem presents premises and asks whether a conclusion logically follows. Binary True/False format.
-  \item \textbf{StrategyQA} \citep{strategyqa}: World knowledge verification from HuggingFace (\texttt{Elriggs/openai-StrategyQA}). Questions require implicit multi-hop reasoning over world knowledge. Binary True/False format.
-\end{itemize}
+\paragraph{Setup.}
+Qwen3-8B (36 layers, 4096 hidden dim, GQA) with \texttt{enable\_thinking=True}, temp=0.6, top-$p$=0.95, top-$k$=20. A100 80GB GPUs (4--8 parallel via process spawning). BF16 activations stored via safetensors with chunked capture (12 layers/pass). Force-answer probing: ${\sim}20$ positions/trace, 15 max new tokens.
 
-The 50/50 True/False balance with plausible distractors is critical to prevent probes from learning sycophancy bias (always agreeing with the user's suggestion) rather than genuine verification reasoning.
-
-All datasets use the swapped-label protocol (Section~\ref{sec:swapped-label}), yielding two configurations per problem. With approximately 300 problems per dataset, 2 configs, and 3 base traces per problem, the full dataset comprises roughly 2,400 traces. For the cross-seed consistency analysis, an additional 17 traces per problem are generated for a subset of ${\sim}41$ originally-correct problems.
-
-\begin{table}[t]
-  \centering
-  \caption{Dataset statistics. Each problem is expanded with the swapped-label protocol (2 configs) and multiple traces per config. Cross-seed subset includes 20 traces per problem for ${\sim}41$ problems.}
-  \label{tab:datasets}
-  \begin{tabular}{lccccc}
-    \toprule
-    Dataset & Problems & True/False & Configs & Base Traces & Cross-Seed Traces \\
-    \midrule
-    GSM-Symbolic & ${\sim}100$ & 50/50 & 2 (A/B) & ${\sim}600$ & ${\sim}820$ \\
-    FOLIO        & ${\sim}100$ & 50/50 & 2 (A/B) & ${\sim}600$ & ${\sim}820$ \\
-    StrategyQA   & ${\sim}100$ & 50/50 & 2 (A/B) & ${\sim}600$ & ${\sim}820$ \\
-    \midrule
-    \textbf{Total} & ${\sim}300$ & --- & --- & ${\sim}1800$ & ${\sim}2460$ \\
-    \bottomrule
-  \end{tabular}
-\end{table}
-
-\subsection{Evaluation Method}
-
-We use the following metrics, divided into those currently implemented (ready for GPU execution) and those planned for future phases:
-
-\paragraph{Current Metrics (Phases 2.2--2.3).}
-\begin{itemize}
-  \item \textbf{Force-answer accuracy}: fraction of probe points where the model produces the correct answer when thinking is truncated at that position.
-  \item \textbf{Transition sharpness}: maximum absolute slope of the mean accuracy-vs-position curve (higher = sharper transition).
-  \item \textbf{Cross-seed consistency}: mean pairwise Spearman correlation of accuracy curves across 20 seeds per problem.
-  \item \textbf{Position-wise variance}: mean variance of accuracy across seeds at each normalized position.
-\end{itemize}
-
-\paragraph{Planned Metrics (Phases 3--6).}
-\begin{itemize}
-  \item \textbf{Probe AUROC}: area under ROC curve for linear probe predictions at each layer.
-  \item \textbf{Token reduction ratio}: $1 - T_i / n$, the fraction of reasoning tokens identified as performative.
-  \item \textbf{Steering success rate}: fraction of traces where steering with the performativity vector produces the predicted behavioral change (verbosity induction or early termination).
-  \item \textbf{Answer preservation rate}: fraction of steered traces that maintain the correct final answer despite behavioral modification.
-\end{itemize}
-
-\subsection{Experimental Details}
-
-\paragraph{Model.} Qwen3-8B (\texttt{Qwen/Qwen3-8B}) \citep{qwen3}: 36 transformer layers, 32 query heads, 8 KV heads (grouped-query attention), 4096 hidden dimension, SwiGLU MLP activations, RoPE positional encoding, 128K context window.
-
-\paragraph{Generation.} All traces are generated with \texttt{enable\_thinking=True}, temperature 0.6, top-$p$ 0.95, top-$k$ 20, min-$p$ 0 (as required by Qwen3's thinking mode; greedy decoding is not supported). Seeds are deterministic per problem and trace index.
-
-\paragraph{Hardware.} A100 80GB GPUs (4--8 GPUs in parallel). Multi-GPU execution uses independent model copies via process spawning (not FSDP/DDP), which avoids inter-process communication overhead for inference-only workloads. Each worker independently loads the model and processes its assigned trace partition.
-
-\paragraph{Activation Storage.} Residual stream activations are stored in BF16 precision via safetensors format. Chunked capture processes 12 layers per pass (3 passes for all 36 layers) to avoid OOM on long traces (3000+ tokens).
-
-\paragraph{Force-Answer Probing.} Approximately 20 positions per trace, 15 max new tokens per probe, KV-cache-efficient with \texttt{DynamicCache.crop()}. Probes are processed in descending position order; cache is deep-copied before each generation call.
-
-\paragraph{Cross-Seed Analysis.} 20 traces per problem, 21-point interpolation grid, selection seed 137 for reproducible problem selection.
-
-\subsection{Results}
-
-GPU execution of both the force-answer probing and cross-seed consistency experiments is currently pending. All experiment scripts have been completed and validated for correctness of their data loading, probe position computation, answer extraction, and output formatting logic. Below we describe the expected results and what they would indicate.
-
-\paragraph{Expected Force-Answer Transition Curves.}
-We expect the aggregate accuracy-vs-normalized-position curve to exhibit a sigmoid shape (Figure~\ref{fig:transition}): accuracy near chance (${}\approx 0.5$) at early positions---where the model has not yet internally resolved the answer---rising sharply to near-perfect accuracy (${}\approx 1.0$) at later positions. The transition midpoint and steepness may differ across datasets: mathematical verification (GSM-Symbolic) may show later transitions due to the sequential nature of arithmetic, while world-knowledge verification (StrategyQA) may show earlier transitions if the model retrieves the answer from parametric memory before explicitly reasoning about it.
+\paragraph{Results.}
+GPU execution is pending; scripts are complete and validated. We expect: (a) sigmoid accuracy-vs-position curves with a sharp transition from ${\sim}0.5$ to ${\sim}1.0$ (Figure~\ref{fig:transition}), with dataset-dependent transition positions (later for GSM-Symbolic arithmetic, earlier for StrategyQA knowledge retrieval); (b) tight cross-seed clustering confirming transitions are robust model properties, not stochastic artifacts.
 
 \begin{figure}[t]
   \centering
   % \includegraphics[width=\linewidth]{figures/transition_curves.pdf}
-  \fbox{\parbox{0.9\linewidth}{\centering\vspace{2cm}
-    Aggregate accuracy (left) and P(correct token) (right) vs.\ normalized position in thinking block, with per-dataset curves (GSM-Symbolic, FOLIO, StrategyQA) overlaid. Expected: sigmoid transition from ${\sim}0.5$ to ${\sim}1.0$. Dashed black line shows aggregate across all datasets.
-  \vspace{2cm}}}
-  \caption{Force-answer transition curves. Each panel shows accuracy or correct-token probability as a function of normalized position within the thinking block (0 = start, 1 = end). The transition from chance-level to near-perfect performance reveals the point at which the model has internally ``decided'' the answer. Shaded regions indicate 95\% confidence intervals.}
+  \fbox{\parbox{0.9\linewidth}{\centering\vspace{1.5cm}
+    Left: Accuracy vs.\ normalized thinking position (per-dataset curves). Right: Cross-seed overlay for a representative problem (20 faint seed curves, bold mean). Expected sigmoid transition with tight cross-seed agreement.
+  \vspace{1.5cm}}}
+  \caption{Expected force-answer transition curves and cross-seed consistency. Sharp transitions from chance to near-perfect accuracy reveal when the model internally ``decides'' the answer.}
   \label{fig:transition}
 \end{figure}
 
-\paragraph{Expected Cross-Seed Consistency.}
-If the transition is a genuine property of the model's reasoning process rather than a stochastic artifact, we expect individual seed curves to cluster tightly around the mean (Figure~\ref{fig:cross-seed}). Problems with clean transitions should exhibit high sharpness, low position-wise variance, and high pairwise Spearman correlation. We may observe a bimodal sharpness distribution (Figure~\ref{fig:sharpness}): sharp transitions for ``clean'' problems where the model reliably finds the answer, and flat curves for problems where the transition is absent or gradual.
-
-\begin{figure}[t]
-  \centering
-  % \includegraphics[width=\linewidth]{figures/cross_seed_overlay.pdf}
-  \fbox{\parbox{0.9\linewidth}{\centering\vspace{2cm}
-    Per-problem cross-seed overlay. Left panel: binary accuracy. Right panel: P(correct token). 20 faint individual seed curves with bold mean curve. Expected: tight clustering around the transition point if the transition is a robust model property.
-  \vspace{2cm}}}
-  \caption{Cross-seed consistency for a representative problem. Faint lines show individual seed curves; bold line shows the mean. Tight clustering indicates that the transition point is a stable property of the model's reasoning process, not an artifact of a particular generation path.}
-  \label{fig:cross-seed}
-\end{figure}
-
-\begin{figure}[t]
-  \centering
-  % \includegraphics[width=0.7\linewidth]{figures/sharpness_histogram.pdf}
-  \fbox{\parbox{0.6\linewidth}{\centering\vspace{2cm}
-    Histogram of transition sharpness values across all ${\sim}41$ problems. Expected: bimodal distribution with a cluster of high-sharpness problems (clear transitions) and possibly a cluster of low-sharpness problems (absent or gradual transitions).
-  \vspace{2cm}}}
-  \caption{Distribution of transition sharpness across problems. Sharpness is defined as the maximum absolute slope of the mean accuracy curve across seeds. Red dashed line indicates the median.}
-  \label{fig:sharpness}
-\end{figure}
-
-\paragraph{Expected Quantitative Results.}
-Table~\ref{tab:results} presents the template for quantitative results that will be populated after GPU execution.
-
 \begin{table}[t]
   \centering
-  \caption{Quantitative results summary (to be completed after GPU execution). Median Transition is the normalized position where mean accuracy first exceeds 0.75. Sharpness is the max slope of the mean accuracy curve. Cross-Seed Spearman is the mean pairwise rank correlation across 20 seeds.}
+  \small
+  \caption{Expected quantitative results (to be filled after GPU execution).}
   \label{tab:results}
   \begin{tabular}{lcccc}
     \toprule
-    Dataset & N Problems & Median Transition & Sharpness & Cross-Seed Spearman \\
+    Dataset & N & Median Transition & Sharpness & Cross-Seed $\rho$ \\
     \midrule
     GSM-Symbolic & --- & --- & --- & --- \\
     FOLIO        & --- & --- & --- & --- \\
     StrategyQA   & --- & --- & --- & --- \\
-    \midrule
-    Aggregate    & --- & --- & --- & --- \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-\paragraph{Interpretation.}
-If the force-answer curves show sharp sigmoid transitions and the cross-seed analysis confirms consistency, this provides strong correlational evidence that Qwen3-8B has a well-defined internal transition from searching to knowing. The token reduction ratio ($1 - T_i/n$) would then quantify the fraction of reasoning tokens that are potentially performative. However, establishing that these post-transition tokens are \emph{causally} unnecessary requires the steering experiments planned for Phase 5 (Section~\ref{sec:future}).
-
-% ===================================================================
-% SECTION 3: FUTURE WORK
 % ===================================================================
 \section{Future Work}
-\label{sec:future}
 
-Our remaining work is organized into four phases, each building on the previous phase's outputs.
+\paragraph{Probing and Transition Detection.} Train linear probes per layer with Train-on-End, Test-on-Middle protocol; identify per-trace transition points; analyze cosine similarity dynamics (pre-$T_i$ drift vs.\ post-$T_i$ stability); classify post-transition CoT via the Cox 2$\times$2 framework \citep{cox2025posthoc}.
 
-\paragraph{Phase 3: Probing and Transition Detection.}
-We will train linear probes (logistic regression, $d = 4096 \to 2$ classes) on residual stream activations using the ``Train-on-End, Test-on-Middle'' protocol described in Section~\ref{sec:probing}. Key deliverables include: per-layer AUROC curves across all three datasets with 5-fold stratified cross-validation, random-label selectivity controls (warning if control AUROC $> 0.60$), per-trace transition point identification with quality categorization (clean, gradual, absent, immediate), cosine similarity dynamics of residual stream states (testing the hypothesis that pre-$T_i$ states show high drift while post-$T_i$ states show high stability), and classification of post-transition CoT segments into the Cox 2$\times$2 framework \citep{cox2025posthoc}: Sound Reasoning, Non-entailment, Confabulation, and Hallucination.
+\paragraph{Causal Steering.} Extract performativity vector, validate with dose-response curves ($\alpha$ sweep), random-vector and sham controls. Compare against entropy, greedy pruning, and random baselines. This is the critical step: force-answer probing provides correlational evidence; only steering can establish that post-transition tokens are \emph{causally} unnecessary.
 
-\paragraph{Phase 4: Differential Analysis and Vector Extraction.}
-Traces will be clustered into Concise (short post-$T_i$) and Performative (long post-$T_i$) groups, aligned at detected transition points. The performativity vector $v_{\text{perf}}$ will be extracted via Difference in Means. We will compute cross-dataset vector similarities (pairwise cosine similarity between GSM-Symbolic, FOLIO, and StrategyQA performativity vectors) and run 9 cross-steering experiments (3 source datasets $\times$ 3 target datasets) to assess transfer. Additionally, following \citet{arcuschin2025cot}, we will create reversed question pairs to detect Implicit Post-Hoc Reasoning (IPHR) bias and classify unfaithfulness patterns (Fact Manipulation, Argument Switching, Answer Flipping) in post-transition CoT segments.
+\paragraph{Evaluation.} Ablation studies (threshold, $K$, layer, $\alpha$, sample size), FDR-corrected statistics, and paper-ready figures.
 
-\paragraph{Phase 5: Causal Steering Validation.}
-This is the critical phase for establishing \emph{causal} evidence. Using nnsight hooks \citep{nnsight}, we will inject $\pm \alpha \cdot v_{\text{perf}}$ into model activations during generation with alpha swept from $-8$ to $+8$, producing dose-response curves. Controls include random-vector (same norm, random direction) and sham (patching from same-answer traces) interventions. We will compare probe-based transition detection against the entropy-based, greedy pruning, and random/midpoint baselines (Section~\ref{sec:baselines}). If steering with $+v_{\text{perf}}$ induces unnecessary verbosity in concise traces and $-v_{\text{perf}}$ induces early termination in verbose traces---while random-vector and sham controls show no such effect---this constitutes causal evidence that $v_{\text{perf}}$ captures the performative reasoning direction.
-
-\paragraph{Phase 6: Final Evaluation and Paper Outputs.}
-We will complete ablation studies (probe confidence threshold, sustained-$K$, steering injection layer, alpha sweep, sample size, layer choice), compute all quantitative metrics with FDR-corrected $p$-values (Benjamini-Hochberg) and effect sizes (Cohen's $d$), generate publication-quality figures, and perform logit lens analysis tracking correct-answer token rank across layers at positions before and after $T_i$.
-
-The key missing piece in the current work is \emph{causal evidence}. Force-answer probing (Phase 2.2) and cross-seed consistency (Phase 2.3) provide correlational evidence that the model encodes the answer before reasoning concludes. Linear probing (Phase 3) will strengthen this correlation. But only causal steering (Phase 5) can establish that post-transition tokens are genuinely performative---that the model would produce the correct answer even without them, and that the performativity direction is a meaningful and manipulable feature of the model's internal computation.
-
-% ===================================================================
-% REFERENCES
 % ===================================================================
 \bibliographystyle{plainnat}
 \bibliography{references}

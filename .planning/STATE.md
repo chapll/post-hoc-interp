@@ -12,7 +12,7 @@ See: .planning/PROJECT.md (updated 2026-02-04)
 Phase: 2.3 of 6 (Cross-Seed Transition Consistency)
 Plan: 3 of 3 (visualization + metrics) -- PHASE COMPLETE
 Status: Phase 2.3 complete
-Last activity: 2026-02-26 -- Completed quick task 003 (milestone report draft)
+Last activity: 2026-02-26 -- Completed quick task 004 (condense milestone to 2 pages)
 
 Progress: [###########-] ~55%
 
@@ -123,9 +123,10 @@ Recent decisions affecting current work:
 | 001 | Flatten src/infra/ into src/ | 2026-02-18 | 62e26e1 | [001-move-src-infra-contents-to-src](./quick/001-move-src-infra-contents-to-src/) |
 | 002 | Move data to DATA_DIR, env-var config paths | 2026-02-18 | 4ac6096 | [002-move-data-to-data-dir](./quick/002-move-data-to-data-dir/) |
 | 003 | Write CS224N milestone report draft | 2026-02-26 | bf181ac | [003-write-milestone-report-drafts](./quick/003-write-milestone-report-drafts/) |
+| 004 | Condense milestone to ~2 pages | 2026-02-26 | pending | [004-condense-milestone-to-2-pages](./quick/004-condense-milestone-to-2-pages/) |
 
 ## Session Continuity
 
 Last session: 2026-02-26
-Stopped at: Completed quick task 003 (milestone report draft). paper/milestone.tex and paper/references.bib created. Next: Phase 3 (probing and transition detection).
+Stopped at: Completed quick task 004 (condensed milestone). paper/milestone.tex rewritten from 319 to 105 lines (~2 pages). Next: Phase 3 (probing and transition detection).
 Resume file: None
