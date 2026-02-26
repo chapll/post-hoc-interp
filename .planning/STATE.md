@@ -1,3 +1,16 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+status: unknown
+last_updated: "2026-02-26T11:09:37.372Z"
+progress:
+  total_phases: 6
+  completed_phases: 5
+  total_plans: 24
+  completed_plans: 23
+---
+
 # Project State
 
 ## Project Reference
@@ -5,23 +18,23 @@
 See: .planning/PROJECT.md (updated 2026-02-04)
 
 **Core value:** Identify the exact internal transition point where Qwen3-8B shifts from "searching" to "knowing" the answer, and provide mechanistic causal evidence that post-transition tokens are performative.
-**Current focus:** Phase 3 (Probing and Transition Detection) in progress. Foundation artifacts, layer selection pilot, and full probe training complete. Confidence curves and transition detection next.
+**Current focus:** Phase 3 (Probing and Transition Detection) COMPLETE. All 4 plans done: foundation artifacts, layer selection pilot, full probe training, confidence curves + transition detection. Phase 4 (Differential Analysis) next.
 
 ## Current Position
 
-Phase: 3 of 6 (Probing and Transition Detection)
-Plan: 3 of 4 (full probe training) -- COMPLETE
-Status: Phase 3 in progress
-Last activity: 2026-02-26 -- Completed 03-03-PLAN.md (full probe training)
+Phase: 3 of 6 (Probing and Transition Detection) -- COMPLETE
+Plan: 4 of 4 (confidence curves + transition detection) -- COMPLETE
+Status: Phase 3 complete, Phase 4 next
+Last activity: 2026-02-26 -- Completed 03-04-PLAN.md (confidence curves, transition detection, QA visualization)
 
-Progress: [##############-] ~67%
+Progress: [###############-] ~71%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 24 (22 phase plans + 2 quick tasks)
+- Total plans completed: 25 (23 phase plans + 2 quick tasks)
 - Average duration: 5min
-- Total execution time: ~2.35 hours
+- Total execution time: ~2.47 hours
 
 **By Phase:**
 
@@ -32,13 +45,14 @@ Progress: [##############-] ~67%
 | 02.1-repo-restructure | 3/3 | 12min | 4min | Complete |
 | 02.2-force-answer-experiment | 2/2 | 16min | 8min | Complete |
 | 02.3-cross-seed-consistency | 3/3 | 14min | 4.7min | Complete |
-| 03-probing-and-transition-detection | 3/4 | 14min | 4.7min | In Progress |
+| 03-probing-and-transition-detection | 4/4 | 21min | 5.3min | Complete |
 
 **Recent Trend:**
-- Last 5 plans: 02.3-03 (5min), 03-01 (6min), 03-02 (5min), 03-03 (3min)
+- Last 5 plans: 03-01 (6min), 03-02 (5min), 03-03 (3min), 03-04 (7min)
 - Trend: Steady execution, averaging ~5 min per plan
 
 *Updated after each plan completion*
+| Phase 03 P04 | 7min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -109,6 +123,11 @@ Recent decisions affecting current work:
 - **Two-stage extraction for full training**: top-N layers for CV/selectivity, then all 36 layers chunked for final weights
 - **Final probes trained on full data (no val split)** since CV already evaluated generalization
 - **Safetensors probe format**: layer_{i}_weight, layer_{i}_bias for i in 0..35
+- **Probe ALL think-block content positions** -- mask from get_think_content_mask already excludes boundary tokens, no extra skip logic needed
+- **Per-dataset probes preferred over pooled**; fall back to pooled when per-dataset unavailable
+- **Transition point preference order**: sigmoid > derivative > binseg > pelt (for segment assignment and cosine comparison)
+- **Pooled standard deviation for Cohen's d** (classic formulation, appropriate for pre/post groups with different sizes)
+- **Long-format parquet**: one row per token-position per layer for maximum downstream flexibility
 
 ### Roadmap Evolution
 
@@ -139,5 +158,5 @@ Recent decisions affecting current work:
 ## Session Continuity
 
 Last session: 2026-02-26
-Stopped at: Completed 03-03-PLAN.md (full probe training). Script ready to run on GPU. Next: 03-04 (confidence curves and transition detection).
+Stopped at: Completed 03-04-PLAN.md (confidence curves, transition detection, QA visualization). Phase 3 fully complete. Next: Phase 4 (Differential Analysis).
 Resume file: None

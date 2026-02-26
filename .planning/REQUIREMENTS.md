@@ -420,7 +420,7 @@ RL method to optimize reasoning length using transition point information.
 | REQ-P1 | Phase 3 | Complete |
 | REQ-P2 | Phase 3 | Complete |
 | REQ-P3 | Phase 3 | Complete |
-| REQ-P4 | Phase 3 | Pending |
+| REQ-P4 | Phase 3 | Complete |
 | REQ-P5 | Phase 3 | Pending |
 | REQ-V1 | Phase 4 | Pending |
 | REQ-V4 | Phase 4 | Pending |
