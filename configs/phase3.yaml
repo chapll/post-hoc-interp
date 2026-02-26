@@ -1,0 +1,70 @@
+# Phase 3: Probing and Transition Detection
+# Merges on top of base.yaml via load_config("configs/phase3.yaml")
+
+phase3:
+  # Layer selection pilot
+  pilot:
+    n_traces: 100                    # stratified across datasets and correctness
+    traces_per_dataset: 34           # ~100 total (34+34+34=102, take first 100)
+
+  # Probe training
+  probe:
+    hidden_dim: 4096
+    num_classes: 2                   # binary: Yes/No (ground_truth)
+    lr: 1e-3
+    weight_decay: 1e-4
+    max_epochs: 100
+    patience: 10                     # early stopping patience
+    n_folds: 5                       # stratified CV folds
+    pre_handoff_window: 3            # tokens before final </think>
+
+  # Selectivity controls
+  selectivity:
+    n_permutations: 10               # random-label permutation count
+    warning_threshold: 0.60          # warn if random AUROC > this
+
+  # Transition detection
+  transition:
+    methods: ["derivative", "pelt", "binseg", "sigmoid"]
+    derivative:
+      window_length: 21              # Savitzky-Golay window (must be odd)
+      polyorder: 3
+      slope_threshold: 0.01
+    pelt:
+      model: "l2"
+      penalties: [1, 5, 10, 20, 50, 100]  # sweep
+      min_size: 5
+    binseg:
+      model: "l2"
+      n_bkps: 2                      # expected breakpoints
+      min_size: 5
+    sigmoid:
+      r2_thresholds: [0.75, 0.80, 0.85, 0.90, 0.95]
+      maxfev: 5000
+
+  # Classification thresholds
+  classification:
+    no_signal_max: 0.70              # max confidence for no-signal
+    clear_plateau_min: 0.90          # min mean confidence in last 10 points
+
+  # Layer selection
+  layers:
+    n_top: 6                         # number of top layers to keep after pilot
+    num_total: 36                    # total transformer layers
+
+  # Cosine similarity
+  cosine:
+    additional_layers: 3             # additional layers beyond best-AUROC
+
+  # Results
+  results:
+    format: "parquet"
+
+paths:
+  traces_dir: "${paths.data_dir}/traces"
+  results_dir: "${paths.data_dir}/results/phase3"
+  probes_dir: "${paths.data_dir}/results/phase3/probes"
+  transitions_dir: "${paths.data_dir}/results/phase3/transitions"
+
+gpus: [0]
+seed: 137
