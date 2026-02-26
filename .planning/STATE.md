@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-04)
 
 **Core value:** Identify the exact internal transition point where Qwen3-8B shifts from "searching" to "knowing" the answer, and provide mechanistic causal evidence that post-transition tokens are performative.
-**Current focus:** Phase 3 (Probing and Transition Detection) in progress. Foundation artifacts and layer selection pilot complete. Full probe training next.
+**Current focus:** Phase 3 (Probing and Transition Detection) in progress. Foundation artifacts, layer selection pilot, and full probe training complete. Confidence curves and transition detection next.
 
 ## Current Position
 
 Phase: 3 of 6 (Probing and Transition Detection)
-Plan: 2 of 4 (layer selection pilot) -- COMPLETE
+Plan: 3 of 4 (full probe training) -- COMPLETE
 Status: Phase 3 in progress
-Last activity: 2026-02-26 -- Completed 03-02-PLAN.md (layer selection pilot)
+Last activity: 2026-02-26 -- Completed 03-03-PLAN.md (full probe training)
 
-Progress: [#############-] ~63%
+Progress: [##############-] ~67%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 23 (21 phase plans + 2 quick tasks)
+- Total plans completed: 24 (22 phase plans + 2 quick tasks)
 - Average duration: 5min
-- Total execution time: ~2.3 hours
+- Total execution time: ~2.35 hours
 
 **By Phase:**
 
@@ -32,10 +32,10 @@ Progress: [#############-] ~63%
 | 02.1-repo-restructure | 3/3 | 12min | 4min | Complete |
 | 02.2-force-answer-experiment | 2/2 | 16min | 8min | Complete |
 | 02.3-cross-seed-consistency | 3/3 | 14min | 4.7min | Complete |
-| 03-probing-and-transition-detection | 2/4 | 11min | 5.5min | In Progress |
+| 03-probing-and-transition-detection | 3/4 | 14min | 4.7min | In Progress |
 
 **Recent Trend:**
-- Last 5 plans: 02.3-02 (4min), 02.3-03 (5min), 03-01 (6min), 03-02 (5min)
+- Last 5 plans: 02.3-03 (5min), 03-01 (6min), 03-02 (5min), 03-03 (3min)
 - Trend: Steady execution, averaging ~5 min per plan
 
 *Updated after each plan completion*
@@ -104,6 +104,11 @@ Recent decisions affecting current work:
 - **Top-N layer selection strategy**: best layer + 2 above + 2 below + 1 early layer (< layer 8), fill by AUROC rank
 - **Per-layer random seed offset** (137 + layer_idx) for selectivity control reproducibility
 - **Model freed from GPU before probe training** to maximize VRAM for training data
+- **Primary trace is trace_00.json per problem** for probe training (one sample per problem, avoids data leakage)
+- **Correct traces only for training** (is_correct filter) -- probe learns what correct knowledge looks like
+- **Two-stage extraction for full training**: top-N layers for CV/selectivity, then all 36 layers chunked for final weights
+- **Final probes trained on full data (no val split)** since CV already evaluated generalization
+- **Safetensors probe format**: layer_{i}_weight, layer_{i}_bias for i in 0..35
 
 ### Roadmap Evolution
 
@@ -134,5 +139,5 @@ Recent decisions affecting current work:
 ## Session Continuity
 
 Last session: 2026-02-26
-Stopped at: Completed 03-02-PLAN.md (layer selection pilot). Script ready to run on GPU. Next: 03-03 (full probe training at selected layers).
+Stopped at: Completed 03-03-PLAN.md (full probe training). Script ready to run on GPU. Next: 03-04 (confidence curves and transition detection).
 Resume file: None
