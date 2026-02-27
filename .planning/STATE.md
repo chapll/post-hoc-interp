@@ -45,6 +45,7 @@ Progress: [###############-] ~71%
 | 02.1-repo-restructure | 3/3 | 12min | 4min | Complete |
 | 02.2-force-answer-experiment | 2/2 | 16min | 8min | Complete |
 | 02.3-cross-seed-consistency | 3/3 | 14min | 4.7min | Complete |
+| 02.4-per-token-force-answer | 2/2 | 5min | 2.5min | Complete |
 | 03-probing-and-transition-detection | 4/4 | 21min | 5.3min | Complete |
 
 **Recent Trend:**
@@ -128,12 +129,23 @@ Recent decisions affecting current work:
 - **Transition point preference order**: sigmoid > derivative > binseg > pelt (for segment assignment and cosine comparison)
 - **Pooled standard deviation for Cohen's d** (classic formulation, appropriate for pre/post groups with different sizes)
 - **Long-format parquet**: one row per token-position per layer for maximum downstream flexibility
+- **Inlined extract_answer/extract_rho_tau_probs in no_think_baseline.py** -- avoids cross-script import complexity for ~60 lines of self-contained logic
+- **Config A only for no-think baseline** -- baseline filter only needs correctness, not both label mappings
+- **Inline probing loop for per-token experiment** -- enables periodic torch.cuda.empty_cache() every 100 probes over 824 iterations
+- **Direct trace loading by path** for single known trace -- no need for load_traces_for_experiment() selection logic
+- **COARSE_COLOR=#BB5566** for Phase 2.2 overlay in per-token visualization -- distinct from ACC_COLOR and PROB_COLOR
+- **Transition region detection** via rolling-20 accuracy crossing 0.5 threshold, 10% margin expansion, fallback to 25%-85%
+- **Transition shape heuristic** -- <=2 transitions=step function, <=6=gradual ramp, >6=oscillatory (rough label, plots are primary)
+- **Multi-trace config pattern** -- traces list in config replaces single-trace fields; num_probes derived dynamically per trace
+- **Resume-by-output-existence** -- skip traces with existing results.parquet before processing
+- **Normalized position for multi-trace comparison** -- traces with different think_lengths align on 0-1 scale
 
 ### Roadmap Evolution
 
 - Phase 2.1 inserted after Phase 2: Repo restructure and shared infra stabilization (INSERTED) -- promote experimental/gorn/ to main repo, eliminate experimental dirs, validate stability
 - Phase 2.2 inserted after Phase 2.1: Force-answer transition experiment (INSERTED) -- truncate thinking at probe points, force model to answer, plot accuracy-vs-position to detect phase transition. Exploratory experiment to validate core hypothesis before full probing infrastructure.
 - Phase 2.3 inserted after Phase 2.2: Cross-seed transition consistency (INSERTED) -- for each problem, probe all 3 traces (different seeds) to check if the transition point is consistent across seeds. Per-problem visualization + cross-seed agreement quantification. Aggregate analysis from 2.2 dilutes signal; per-problem cross-seed analysis is the right lens.
+- Phase 2.4 inserted after Phase 2.3: Per-token force-answer probing (INSERTED) -- probe at every thinking token for a single trace (gsm_symbolic_68_fresh_false_cfga) to get high-resolution transition dynamics. Reveals exact shape of transition that ~20-point grid cannot resolve.
 
 ### Pending Todos
 
@@ -154,6 +166,10 @@ Recent decisions affecting current work:
 |---|-------------|------|--------|-----------|
 | 001 | Flatten src/infra/ into src/ | 2026-02-18 | 62e26e1 | [001-move-src-infra-contents-to-src](./quick/001-move-src-infra-contents-to-src/) |
 | 002 | Move data to DATA_DIR, env-var config paths | 2026-02-18 | 4ac6096 | [002-move-data-to-data-dir](./quick/002-move-data-to-data-dir/) |
+| 003 | Write CS224N milestone report draft | 2026-02-26 | bf181ac | [003-write-milestone-report-drafts](./quick/003-write-milestone-report-drafts/) |
+| 004 | Condense milestone to ~2 pages | 2026-02-26 | 66ab174 | [004-condense-milestone-to-2-pages](./quick/004-condense-milestone-to-2-pages/) |
+| 005 | No-think baseline filter script | 2026-02-26 | e156946 | [005-no-think-baseline-filter](./quick/005-no-think-baseline-filter/) |
+| 006 | Multi-trace per-token probing | 2026-02-26 | dc8668d | [006-multi-trace-per-token-probe](./quick/006-multi-trace-per-token-probe/) |
 
 ## Session Continuity
 

@@ -1,0 +1,15 @@
+# No-think baseline experiment config
+# Merges on top of base.yaml via load_config("configs/no_think_baseline.yaml")
+#
+# Evaluates Qwen3-8B on all benchmark problems with thinking disabled
+# (force-close think block at position 0). Problems answered correctly
+# without thinking are flagged as trivial/memorized for exclusion.
+
+no_think_baseline:
+  max_new_tokens: 15
+  problems_per_dataset: 300
+
+paths:
+  output_dir: "${oc.env:EXP_DIR}/no_think_baseline"
+
+gpus: [0, 1, 2, 3]
