@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-04)
 
 **Core value:** Identify the exact internal transition point where Qwen3-8B shifts from "searching" to "knowing" the answer, and provide mechanistic causal evidence that post-transition tokens are performative.
-**Current focus:** Phases 2.2 and 2.3 complete. Cross-seed pipeline scripted (config + generation, probing, visualization). GPU execution needed. Phase 3 planning next.
+**Current focus:** Phase 2.4 complete (per-token dense probing script + visualization). Next: GPU execution of per-token probing, then Phase 3.
 
 ## Current Position
 
-Phase: 2.3 of 6 (Cross-Seed Transition Consistency)
-Plan: 3 of 3 (visualization + metrics) -- PHASE COMPLETE
-Status: Phase 2.3 complete
-Last activity: 2026-02-26 -- Completed quick task 005 (no-think baseline filter script)
+Phase: 2.4 of 6 (Per-Token Force-Answer Probing)
+Plan: 2 of 2
+Status: Phase complete
+Last activity: 2026-02-26 -- Completed 02.4-02-PLAN.md (per-token probe visualization)
 
-Progress: [###########-] ~55%
+Progress: [#############] ~60%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 23 (19 phase plans + 4 quick tasks)
+- Total plans completed: 27 (21 phase plans + 6 quick tasks)
 - Average duration: 5min
-- Total execution time: ~2.2 hours
+- Total execution time: ~2.4 hours
 
 **By Phase:**
 
@@ -32,10 +32,11 @@ Progress: [###########-] ~55%
 | 02.1-repo-restructure | 3/3 | 12min | 4min | Complete |
 | 02.2-force-answer-experiment | 2/2 | 16min | 8min | Complete |
 | 02.3-cross-seed-consistency | 3/3 | 14min | 4.7min | Complete |
+| 02.4-per-token-force-answer | 2/2 | 5min | 2.5min | Complete |
 
 **Recent Trend:**
-- Last 5 plans: 02.2-01 (8min), 02.3-01 (5min), 02.3-02 (4min), 02.3-03 (5min)
-- Trend: Steady execution, experiment scripts averaging ~5 min each
+- Last 5 plans: 02.3-02 (4min), 02.3-03 (5min), 02.4-01 (3min), 02.4-02 (2min)
+- Trend: Steady execution, visualization scripts fastest at ~2 min
 
 *Updated after each plan completion*
 
@@ -98,12 +99,21 @@ Recent decisions affecting current work:
 - **No formal transition point detection** -- raw data visualization per locked decision
 - **Inlined extract_answer/extract_rho_tau_probs in no_think_baseline.py** -- avoids cross-script import complexity for ~60 lines of self-contained logic
 - **Config A only for no-think baseline** -- baseline filter only needs correctness, not both label mappings
+- **Inline probing loop for per-token experiment** -- enables periodic torch.cuda.empty_cache() every 100 probes over 824 iterations
+- **Direct trace loading by path** for single known trace -- no need for load_traces_for_experiment() selection logic
+- **COARSE_COLOR=#BB5566** for Phase 2.2 overlay in per-token visualization -- distinct from ACC_COLOR and PROB_COLOR
+- **Transition region detection** via rolling-20 accuracy crossing 0.5 threshold, 10% margin expansion, fallback to 25%-85%
+- **Transition shape heuristic** -- <=2 transitions=step function, <=6=gradual ramp, >6=oscillatory (rough label, plots are primary)
+- **Multi-trace config pattern** -- traces list in config replaces single-trace fields; num_probes derived dynamically per trace
+- **Resume-by-output-existence** -- skip traces with existing results.parquet before processing
+- **Normalized position for multi-trace comparison** -- traces with different think_lengths align on 0-1 scale
 
 ### Roadmap Evolution
 
 - Phase 2.1 inserted after Phase 2: Repo restructure and shared infra stabilization (INSERTED) -- promote experimental/gorn/ to main repo, eliminate experimental dirs, validate stability
 - Phase 2.2 inserted after Phase 2.1: Force-answer transition experiment (INSERTED) -- truncate thinking at probe points, force model to answer, plot accuracy-vs-position to detect phase transition. Exploratory experiment to validate core hypothesis before full probing infrastructure.
 - Phase 2.3 inserted after Phase 2.2: Cross-seed transition consistency (INSERTED) -- for each problem, probe all 3 traces (different seeds) to check if the transition point is consistent across seeds. Per-problem visualization + cross-seed agreement quantification. Aggregate analysis from 2.2 dilutes signal; per-problem cross-seed analysis is the right lens.
+- Phase 2.4 inserted after Phase 2.3: Per-token force-answer probing (INSERTED) -- probe at every thinking token for a single trace (gsm_symbolic_68_fresh_false_cfga) to get high-resolution transition dynamics. Reveals exact shape of transition that ~20-point grid cannot resolve.
 
 ### Pending Todos
 
@@ -127,9 +137,10 @@ Recent decisions affecting current work:
 | 003 | Write CS224N milestone report draft | 2026-02-26 | bf181ac | [003-write-milestone-report-drafts](./quick/003-write-milestone-report-drafts/) |
 | 004 | Condense milestone to ~2 pages | 2026-02-26 | 66ab174 | [004-condense-milestone-to-2-pages](./quick/004-condense-milestone-to-2-pages/) |
 | 005 | No-think baseline filter script | 2026-02-26 | e156946 | [005-no-think-baseline-filter](./quick/005-no-think-baseline-filter/) |
+| 006 | Multi-trace per-token probing | 2026-02-26 | dc8668d | [006-multi-trace-per-token-probe](./quick/006-multi-trace-per-token-probe/) |
 
 ## Session Continuity
 
 Last session: 2026-02-26
-Stopped at: Completed quick task 005 (no-think baseline filter). scripts/no_think_baseline.py + configs/no_think_baseline.yaml ready for GPU execution. Next: run no-think baseline on cluster, then Phase 3.
+Stopped at: Completed quick-006 (multi-trace per-token probing). Ready to submit multi-trace run via slurm/submit slurm/per-token-probe.sbatch.
 Resume file: None

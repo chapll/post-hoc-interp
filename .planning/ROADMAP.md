@@ -18,6 +18,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: Trace Generation at Scale** - Two-pass trace generation across ~400 problems with multi-GPU parallelism and contamination mitigation
 - [x] **Phase 2.1: Repo Restructure and Shared Infra Stabilization** (INSERTED) - Promote experimental/gorn/ code to main repo structure, eliminate experimental dirs, validate all imports and pipeline stability
 - [x] **Phase 2.2: Force-Answer Transition Experiment** (INSERTED) - Truncate thinking at probe points, force model to answer, plot accuracy-vs-position to detect phase transition
+- [x] **Phase 2.4: Per-Token Force-Answer Probing** (INSERTED) - High-resolution per-token probing on a single trace to reveal exact transition dynamics
 - [ ] **Phase 3: Probing and Transition Detection** - Linear probes, selectivity controls, transition point identification, cosine similarity dynamics, Cox 2x2 framework
 - [ ] **Phase 4: Differential Analysis and Vector Extraction** - Performativity vector via Difference in Means, cross-dataset analysis, IPHR reversed pairs, unfaithfulness patterns
 - [ ] **Phase 5: Causal Steering Validation** - Steering with performativity vector, sham controls, entropy baseline, greedy pruning baseline, random/midpoint baselines
@@ -152,9 +153,34 @@ Plans:
 - [x] 02.3-02-PLAN.md -- Cross-seed probing script (20 seeds x ~20 probes per problem)
 - [x] 02.3-03-PLAN.md -- Per-problem visualization, agreement metrics, summary plots, and visual verification
 
+### Phase 2.4: Per-Token Force-Answer Probing (INSERTED)
+**Goal**: For a single representative trace (`gsm_symbolic_68_fresh_false_cfga`), probe at every token position within the thinking block (not just ~20 evenly-spaced positions) to get a high-resolution accuracy/probability curve. This reveals the exact token-level dynamics of the transition — whether it's a sharp step function, gradual ramp, or oscillatory — at a granularity that the ~20-point grid from Phases 2.2/2.3 cannot resolve.
+**Depends on**: Phase 2.3 (reuses force-answer probing infrastructure)
+**Requirements**: None (exploratory experiment, extends Phase 2.2/2.3 findings)
+**Key Risks**:
+  - Computationally expensive: one probe per thinking token means hundreds of forward passes for a single trace
+  - KV cache reuse is critical for feasibility — must process probes in descending order with cache cropping
+  - Single trace may not be representative — but this is intentional (deep dive on one example first)
+**Experiment Design**:
+  - **Input**: Single trace `gsm_symbolic_68_fresh_false_cfga` (a known originally-correct problem with clean transition in Phase 2.2/2.3 results)
+  - **Probing**: Every token position within the thinking block (between `<think>` and `</think>`)
+  - **At each position t**: Truncate to tokens [0..t], append `</think>\n`, generate answer tokens freely
+  - **Record per position**: correctness, logit rank of correct token, probability of correct token
+  - **Output**: High-resolution accuracy/probability curve, comparison overlay with the ~20-point curve from Phase 2.2
+**Success Criteria** (what must be TRUE):
+  1. Every thinking token position probed for the target trace, with results saved as structured JSON
+  2. High-resolution accuracy-vs-position and probability-vs-position plots generated
+  3. Comparison with the ~20-point curve from Phase 2.2 showing what detail the coarser grid missed
+  4. Characterization of transition shape (step function, ramp, oscillatory, etc.) at token-level granularity
+**Plans**: 2 plans
+
+Plans:
+- [x] 02.4-01-PLAN.md -- Per-token dense probing experiment script and config (824 positions, KV-cache descending order)
+- [x] 02.4-02-PLAN.md -- Visualization script (per-token curves, Phase 2.2 overlay, transition characterization)
+
 ### Phase 3: Probing and Transition Detection
 **Goal**: Researcher has layer-wise probe AUROC curves across all three datasets with selectivity controls, per-trace transition points with quality categorization, cosine similarity dynamics with statistical tests, and Cox 2x2 classification of post-transition CoT segments. Probes train on `ground_truth` (abstract validity: Yes/No), decoupled from output token (Rho/Tau) by the swapped-label protocol.
-**Depends on**: Phase 2.3
+**Depends on**: Phase 2.4
 **Requirements**: REQ-P1, REQ-P2, REQ-P3, REQ-P4, REQ-P5
 **Key Risks**:
   - Spurious probe correlations due to high dimension-to-sample ratio (P1: d=4096, n=1500; must run selectivity controls from day one)
@@ -241,7 +267,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in strict numeric order: 1 -> 2 -> 2.1 -> 2.2 -> 2.3 -> 3 -> 4 -> 5 -> 6. Each phase depends on the previous phase's output.
+Phases execute in strict numeric order: 1 -> 2 -> 2.1 -> 2.2 -> 2.3 -> 2.4 -> 3 -> 4 -> 5 -> 6. Each phase depends on the previous phase's output.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|---------------|--------|-----------|
@@ -250,6 +276,7 @@ Phases execute in strict numeric order: 1 -> 2 -> 2.1 -> 2.2 -> 2.3 -> 3 -> 4 ->
 | 2.1 Repo Restructure and Shared Infra Stabilization | 3/3 | Complete | 2026-02-06 |
 | 2.2 Force-Answer Transition Experiment | 2/2 | Complete | 2026-02-23 |
 | 2.3 Cross-Seed Transition Consistency | 3/3 | Complete | 2026-02-23 |
+| 2.4 Per-Token Force-Answer Probing | 2/2 | Complete | 2026-02-26 |
 | 3. Probing and Transition Detection | 0/TBD | Not started | - |
 | 4. Differential Analysis and Vector Extraction | 0/TBD | Not started | - |
 | 5. Causal Steering Validation | 0/TBD | Not started | - |
