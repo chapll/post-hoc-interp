@@ -3,27 +3,75 @@
 Runs trace generation on Modal's serverless A100 GPUs. Equivalent to
 generate_traces.py but executes remotely on Modal infrastructure.
 
+Configuration is loaded from configs/modal/generate.yaml with CLI overrides.
+
 Usage:
     # One-time model download to cache volume
     modal run scripts/modal_generate.py --download-only
 
-    # Run trace generation (4 containers by default)
+    # Run trace generation with default config
     modal run scripts/modal_generate.py
 
-    # Run with custom settings
+    # Run with custom config file
+    modal run scripts/modal_generate.py --config configs/modal/my_config.yaml
+
+    # Override specific settings via CLI
     modal run scripts/modal_generate.py --n-containers 8 --gsm-problems 50
 
     # Download results
-    modal volume get traces-output /valid ./data/traces/valid
-    modal volume get traces-output /failed ./data/traces/failed
+    modal volume get traces-output / data/traces/ --force
 """
 
 import hashlib
 import json
 import os
 import time
+from pathlib import Path
 
 import modal
+
+
+# ---------------------------------------------------------------------------
+# Configuration Loading
+# ---------------------------------------------------------------------------
+
+
+def _find_project_root() -> Path:
+    """Walk up from this file to find the directory containing pyproject.toml."""
+    current = Path(__file__).resolve().parent
+    while current != current.parent:
+        if (current / "pyproject.toml").exists():
+            return current
+        current = current.parent
+    raise FileNotFoundError("Could not find project root (no pyproject.toml found)")
+
+
+def load_modal_config(config_path: str | None = None) -> dict:
+    """Load Modal configuration from YAML file.
+
+    Args:
+        config_path: Path to config file. If None, uses configs/modal/generate.yaml.
+
+    Returns:
+        Configuration dict with all settings.
+    """
+    from omegaconf import OmegaConf
+
+    project_root = _find_project_root()
+    default_config = project_root / "configs" / "modal" / "generate.yaml"
+
+    if config_path is not None:
+        config_file = Path(config_path)
+        if not config_file.is_absolute():
+            config_file = project_root / config_file
+    else:
+        config_file = default_config
+
+    if not config_file.exists():
+        raise FileNotFoundError(f"Config file not found: {config_file}")
+
+    cfg = OmegaConf.load(config_file)
+    return OmegaConf.to_container(cfg, resolve=True)
 
 # ---------------------------------------------------------------------------
 # Modal App and Resources
@@ -126,6 +174,59 @@ def download_model(model_name: str = "Qwen/Qwen3-8B"):
     # Commit changes to volume
     model_cache_vol.commit()
     print("Model cached to volume.")
+
+
+# ---------------------------------------------------------------------------
+# Minimal Test Function (for debugging)
+# ---------------------------------------------------------------------------
+
+
+@app.function(
+    image=image,
+    gpu="a100-80gb",
+    volumes={"/model-cache": model_cache_vol},
+    timeout=600,  # 10 minutes
+)
+def test_model_loading():
+    """Minimal test: load model and generate a short response."""
+    import torch
+
+    os.environ["HF_HOME"] = "/model-cache"
+    os.environ["TRANSFORMERS_CACHE"] = "/model-cache"
+
+    print("Step 1: Checking CUDA...")
+    print(f"  CUDA available: {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        print(f"  GPU: {torch.cuda.get_device_name(0)}")
+        print(f"  Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+
+    print("Step 2: Loading tokenizer...")
+    from transformers import AutoTokenizer
+    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-8B", cache_dir="/model-cache")
+    print("  Tokenizer loaded.")
+
+    print("Step 3: Loading model...")
+    from transformers import AutoModelForCausalLM
+    model = AutoModelForCausalLM.from_pretrained(
+        "Qwen/Qwen3-8B",
+        cache_dir="/model-cache",
+        torch_dtype=torch.bfloat16,
+        device_map="cuda:0",
+    )
+    print("  Model loaded.")
+
+    print("Step 4: Generating response...")
+    messages = [{"role": "user", "content": "What is 2+2? Reply with just the number."}]
+    text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    inputs = tokenizer(text, return_tensors="pt").to("cuda:0")
+
+    with torch.no_grad():
+        outputs = model.generate(**inputs, max_new_tokens=50, do_sample=False)
+
+    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    print(f"  Response: {response}")
+
+    return {"status": "success", "response": response}
 
 
 # ---------------------------------------------------------------------------
@@ -319,28 +420,14 @@ def generate_traces_batch(
     image=image,
     timeout=3600,
 )
-def generate_all_traces(
-    n_containers: int = 4,
-    gsm_problems_per_type: int = 100,
-    folio_problems: int = 100,
-    strategyqa_problems: int = 100,
-    traces_per_problem: int = 3,
-    max_new_tokens: int = 4096,
-    seed: int = 137,
-) -> dict:
+def generate_all_traces(config: dict) -> dict:
     """Orchestrate trace generation across multiple containers.
 
     Loads datasets, builds problems with swapped-label protocol,
     splits work, and dispatches to parallel workers.
 
     Args:
-        n_containers: Number of parallel A100 containers to use.
-        gsm_problems_per_type: Problems per type for GSM-Symbolic.
-        folio_problems: Number of FOLIO problems.
-        strategyqa_problems: Number of StrategyQA problems.
-        traces_per_problem: Traces to generate per problem.
-        max_new_tokens: Max tokens for generation.
-        seed: Random seed for dataset loading.
+        config: Full configuration dict from configs/modal/generate.yaml.
 
     Returns:
         Aggregated results dict with total counts.
@@ -351,6 +438,14 @@ def generate_all_traces(
         load_strategyqa,
     )
     from src.prompts import build_verification_prompt
+
+    # Extract settings from config
+    n_containers = config["modal"]["n_containers"]
+    gsm_problems_per_type = config["data"]["gsm_problems_per_type"]
+    folio_problems = config["data"]["folio_problems"]
+    strategyqa_problems = config["data"]["strategyqa_problems"]
+    traces_per_problem = config["data"]["traces_per_problem"]
+    seed = config["seed"]
 
     print("Loading datasets...")
 
@@ -395,24 +490,25 @@ def generate_all_traces(
     for i, batch in enumerate(batches):
         print(f"  Batch {i}: {len(batch)} problems")
 
-    # Config for workers
-    config = {
-        "model_name": "Qwen/Qwen3-8B",
+    # Worker config (subset of full config needed by workers)
+    worker_config = {
+        "model_name": config["model"]["name"],
         "traces_per_problem": traces_per_problem,
-        "max_new_tokens": max_new_tokens,
-        "temperature": 0.6,
-        "top_p": 0.95,
-        "top_k": 20,
+        "max_new_tokens": config["model"]["max_new_tokens"],
+        "temperature": config["generation"]["temperature"],
+        "top_p": config["generation"]["top_p"],
+        "top_k": config["generation"]["top_k"],
     }
 
-    # Dispatch to workers via .map() for parallel execution
+    # Dispatch to workers via .starmap() for parallel execution
+    # Each input is a tuple of (problems, config, batch_id)
     print(f"Dispatching to {n_containers} containers...")
     start_time = time.time()
 
+    inputs = [(batch, worker_config, i) for i, batch in enumerate(batches)]
     results = list(
-        generate_traces_batch.map(
-            batches,
-            kwargs={"config": config},
+        generate_traces_batch.starmap(
+            inputs,
             order_outputs=False,
         )
     )
@@ -437,22 +533,30 @@ def generate_all_traces(
 
 @app.local_entrypoint()
 def main(
-    n_containers: int = 4,
+    config: str = None,
     download_only: bool = False,
-    gsm_problems: int = 100,
-    folio_problems: int = 100,
-    strategyqa_problems: int = 100,
-    traces_per_problem: int = 3,
+    test: bool = False,
+    # CLI overrides for common settings (applied on top of YAML config)
+    n_containers: int = None,
+    gsm_problems: int = None,
+    folio_problems: int = None,
+    strategyqa_problems: int = None,
+    traces_per_problem: int = None,
 ):
     """Entry point for `modal run scripts/modal_generate.py`.
 
+    Configuration is loaded from configs/modal/generate.yaml by default.
+    CLI arguments override specific settings from the config file.
+
     Args:
-        n_containers: Number of parallel A100 containers.
+        config: Path to YAML config file (default: configs/modal/generate.yaml).
         download_only: If True, only download and cache the model.
-        gsm_problems: GSM-Symbolic problems per type (fresh/original).
-        folio_problems: Number of FOLIO problems.
-        strategyqa_problems: Number of StrategyQA problems.
-        traces_per_problem: Traces to generate per problem.
+        test: If True, run minimal test (load model, generate short response).
+        n_containers: Override modal.n_containers from config.
+        gsm_problems: Override data.gsm_problems_per_type from config.
+        folio_problems: Override data.folio_problems from config.
+        strategyqa_problems: Override data.strategyqa_problems from config.
+        traces_per_problem: Override data.traces_per_problem from config.
     """
     if download_only:
         print("Downloading model to cache volume...")
@@ -460,19 +564,38 @@ def main(
         print("Model download complete.")
         return
 
-    print(f"Starting trace generation with {n_containers} containers...")
-    print(f"  GSM problems per type: {gsm_problems}")
-    print(f"  FOLIO problems: {folio_problems}")
-    print(f"  StrategyQA problems: {strategyqa_problems}")
-    print(f"  Traces per problem: {traces_per_problem}")
+    if test:
+        print("Running minimal test...")
+        result = test_model_loading.remote()
+        print(f"Test result: {result}")
+        return
 
-    results = generate_all_traces.remote(
-        n_containers=n_containers,
-        gsm_problems_per_type=gsm_problems,
-        folio_problems=folio_problems,
-        strategyqa_problems=strategyqa_problems,
-        traces_per_problem=traces_per_problem,
-    )
+    # Load configuration from YAML
+    cfg = load_modal_config(config)
+    print(f"Loaded config from: {config or 'configs/modal/generate.yaml'}")
+
+    # Apply CLI overrides
+    if n_containers is not None:
+        cfg["modal"]["n_containers"] = n_containers
+    if gsm_problems is not None:
+        cfg["data"]["gsm_problems_per_type"] = gsm_problems
+    if folio_problems is not None:
+        cfg["data"]["folio_problems"] = folio_problems
+    if strategyqa_problems is not None:
+        cfg["data"]["strategyqa_problems"] = strategyqa_problems
+    if traces_per_problem is not None:
+        cfg["data"]["traces_per_problem"] = traces_per_problem
+
+    print(f"Starting trace generation with {cfg['modal']['n_containers']} containers...")
+    print(f"  Model: {cfg['model']['name']}")
+    print(f"  GSM problems per type: {cfg['data']['gsm_problems_per_type']}")
+    print(f"  FOLIO problems: {cfg['data']['folio_problems']}")
+    print(f"  StrategyQA problems: {cfg['data']['strategyqa_problems']}")
+    print(f"  Traces per problem: {cfg['data']['traces_per_problem']}")
+    print(f"  Generation params: temp={cfg['generation']['temperature']}, "
+          f"top_p={cfg['generation']['top_p']}, top_k={cfg['generation']['top_k']}")
+
+    results = generate_all_traces.remote(config=cfg)
 
     print("\n=== Generation Complete ===")
     print(f"Generated: {results['generated']}")
@@ -480,5 +603,4 @@ def main(
     print(f"Skipped (resume): {results['skipped']}")
     print(f"Failed: {results['failed']}")
     print("\nTo download results:")
-    print("  modal volume get traces-output /valid ./data/traces/valid")
-    print("  modal volume get traces-output /failed ./data/traces/failed")
+    print("  modal volume get traces-output / data/traces/ --force")
