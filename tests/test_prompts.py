@@ -29,21 +29,27 @@ STRATEGYQA_PROBLEM = {
     "question": "Is the sky blue?",
 }
 
+DEEPMATH_PROBLEM = {
+    "dataset_name": "deepmath",
+    "question": "What is the value of 2^10?",
+    "presented_answer": "1024",
+}
+
 
 class TestSwappedProtocol:
     def test_config_a(self):
         result = build_verification_prompt(GSM_PROBLEM, label_protocol="swapped", config="A")
         assert result["prompt_config"] == "A"
-        assert result["label_mapping"] == {"valid": "Rho", "invalid": "Tau"}
-        assert "Rho" in result["verification_prompt"]
-        assert "Tau" in result["verification_prompt"]
+        assert result["label_mapping"] == {"valid": "Mu", "invalid": "Nu"}
+        assert "Mu" in result["verification_prompt"]
+        assert "Nu" in result["verification_prompt"]
 
     def test_config_b(self):
         result = build_verification_prompt(GSM_PROBLEM, label_protocol="swapped", config="B")
         assert result["prompt_config"] == "B"
-        assert result["label_mapping"] == {"valid": "Tau", "invalid": "Rho"}
-        assert "Tau" in result["verification_prompt"]
-        assert "Rho" in result["verification_prompt"]
+        assert result["label_mapping"] == {"valid": "Nu", "invalid": "Mu"}
+        assert "Nu" in result["verification_prompt"]
+        assert "Mu" in result["verification_prompt"]
 
     def test_invalid_config_raises(self):
         with pytest.raises(ValueError):
@@ -88,6 +94,16 @@ class TestDatasetSpecificPrompts:
         result = build_verification_prompt(STRATEGYQA_PROBLEM, label_protocol="swapped", config="A")
         assert "Is the sky blue?" in result["verification_prompt"]
 
+    def test_deepmath_contains_answer(self):
+        result = build_verification_prompt(DEEPMATH_PROBLEM, label_protocol="swapped", config="A")
+        assert "1024" in result["verification_prompt"]
+        assert "2^10" in result["verification_prompt"]
+
+    def test_deepmath_contains_label_tokens(self):
+        result = build_verification_prompt(DEEPMATH_PROBLEM, label_protocol="swapped", config="A")
+        assert "Mu" in result["verification_prompt"]
+        assert "Nu" in result["verification_prompt"]
+
     def test_unknown_dataset_raises(self):
         bad_problem = {"dataset_name": "nonexistent", "question": "x"}
         with pytest.raises(ValueError, match="nonexistent"):
@@ -98,7 +114,7 @@ class TestLabelMappingsConstant:
     def test_label_mappings_structure(self):
         assert "A" in LABEL_MAPPINGS
         assert "B" in LABEL_MAPPINGS
-        assert LABEL_MAPPINGS["A"]["valid"] == "Rho"
-        assert LABEL_MAPPINGS["A"]["invalid"] == "Tau"
-        assert LABEL_MAPPINGS["B"]["valid"] == "Tau"
-        assert LABEL_MAPPINGS["B"]["invalid"] == "Rho"
+        assert LABEL_MAPPINGS["A"]["valid"] == "Mu"
+        assert LABEL_MAPPINGS["A"]["invalid"] == "Nu"
+        assert LABEL_MAPPINGS["B"]["valid"] == "Nu"
+        assert LABEL_MAPPINGS["B"]["invalid"] == "Mu"

@@ -26,6 +26,7 @@ import torch
 # -- project imports ----------------------------------------------------------
 from src.config import load_config
 from src.datasets import (
+    load_deepmath,
     load_folio,
     load_gsm_symbolic_contamination,
     load_strategyqa,
@@ -247,7 +248,12 @@ def main():
     )
     main_logger.info("StrategyQA: %d problems loaded", len(strategyqa_problems))
 
-    all_problems = gsm_problems + folio_problems + strategyqa_problems
+    deepmath_problems = load_deepmath(
+        n=cfg.data.deepmath_problems, seed=cfg.seed
+    )
+    main_logger.info("DeepMath: %d problems loaded", len(deepmath_problems))
+
+    all_problems = gsm_problems + folio_problems + strategyqa_problems + deepmath_problems
     main_logger.info("Total base problems: %d", len(all_problems))
 
     # Apply swapped-label protocol: expand each problem into config A and B variants.
