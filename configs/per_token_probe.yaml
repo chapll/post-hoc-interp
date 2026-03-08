@@ -29,8 +29,8 @@ per_token_probe:
 
   # Token IDs (same as Phase 2.2/2.3)
   close_token_ids: [151668, 198]  # </think> + \n
-  rho_token_ids: [49, 6161]       # "R" + "ho"
-  tau_token_id: 92713             # single token
+  mu_token_id: 39120              # "Mu" (single token)
+  nu_token_id: 60335              # "Nu" (single token)
 
 paths:
   traces_dir: "${paths.data_dir}/traces"

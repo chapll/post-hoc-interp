@@ -41,12 +41,11 @@ from src.utils import set_seed, setup_logging
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scripts.force_answer_experiment import (
     CLOSE_TOKEN_IDS,
-    RHO_FIRST_TOKEN_ID,
-    RHO_TOKEN_IDS,
-    TAU_TOKEN_ID,
+    MU_TOKEN_ID,
+    NU_TOKEN_ID,
     compute_probe_positions,
     extract_answer,
-    extract_rho_tau_probs,
+    extract_mu_nu_probs,
     probe_trace,
 )
 
@@ -418,8 +417,8 @@ REQUIRED_COLUMNS = [
     "normalized_position",
     "correct",
     "no_answer",
-    "rho_prob",
-    "tau_prob",
+    "mu_prob",
+    "nu_prob",
     "correct_token_prob",
     "correct_token_rank",
     "ground_truth",

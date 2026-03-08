@@ -1,21 +1,21 @@
 """Prompt construction for swapped-label probing protocol.
 
-Builds verification prompts with configurable label tokens (Rho/Tau instead of
+Builds verification prompts with configurable label tokens (Mu/Nu instead of
 Yes/No) to eliminate the confound where probes detect hypothetical reasoning
 about "Yes"/"No" tokens rather than abstract validity.
 
 The swapped-label protocol generates each problem under two complementary label
 mappings:
-  - Config A: Valid=Rho, Invalid=Tau
-  - Config B: Valid=Tau, Invalid=Rho
+  - Config A: Valid=Mu, Invalid=Nu
+  - Config B: Valid=Nu, Invalid=Mu
 
-With both configs in training data, Rho/Tau have zero correlation with the
+With both configs in training data, Mu/Nu have zero correlation with the
 validity label, forcing the probe to find the abstract logical signal.
 """
 
 LABEL_MAPPINGS = {
-    "A": {"valid": "Rho", "invalid": "Tau"},
-    "B": {"valid": "Tau", "invalid": "Rho"},
+    "A": {"valid": "Mu", "invalid": "Nu"},
+    "B": {"valid": "Nu", "invalid": "Mu"},
 }
 
 YESNO_MAPPING = {"valid": "Yes", "invalid": "No"}
@@ -31,7 +31,7 @@ def build_verification_prompt(
     Args:
         problem: Problem dict with keys: question, dataset_name, and
             dataset-specific fields (presented_answer, premises, etc.).
-        label_protocol: "swapped" for Rho/Tau protocol, "yesno" for Yes/No.
+        label_protocol: "swapped" for Mu/Nu protocol, "yesno" for Yes/No.
         config: For swapped protocol, "A" or "B". Ignored for yesno.
 
     Returns:

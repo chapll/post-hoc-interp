@@ -313,8 +313,8 @@ def check_swapped_label_metadata(per_dataset: dict[str, list[Path]], sample_size
             # Verify swapped-label fields are present
             if not label_mapping or not valid_token or not invalid_token:
                 missing_fields += 1
-            # Verify tokens are Rho/Tau
-            if valid_token not in ("Rho", "Tau") or invalid_token not in ("Rho", "Tau"):
+            # Verify tokens are Mu/Nu
+            if valid_token not in ("Mu", "Nu") or invalid_token not in ("Mu", "Nu"):
                 record(
                     "swapped_label",
                     f"token_values_{fp.name}",

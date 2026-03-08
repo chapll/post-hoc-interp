@@ -33,11 +33,10 @@ from src.prompts import build_verification_prompt
 from src.utils import set_seed, setup_logging
 
 # ---------------------------------------------------------------------------
-# Token constants (verified from research, same as force_answer_experiment.py)
+# Token constants (verified: Mu and Nu are each single tokens)
 # ---------------------------------------------------------------------------
-RHO_TOKEN_IDS = [49, 6161]       # "R" + "ho" (two tokens)
-RHO_FIRST_TOKEN_ID = 49          # first token of Rho
-TAU_TOKEN_ID = 92713             # single token
+MU_TOKEN_ID = 39120              # "Mu" (single token)
+NU_TOKEN_ID = 60335              # "Nu" (single token)
 CLOSE_TOKEN_IDS = [151668, 198]  # </think> + \n
 
 logger = logging.getLogger(__name__)
@@ -50,42 +49,41 @@ logger = logging.getLogger(__name__)
 def extract_answer(generated_ids, generated_text, expected_token):
     """Extract the answer from generated tokens using dual matching.
 
-    Token-level matching scans for the first Rho or Tau token(s).
-    String-level matching checks for "rho" or "tau" in decoded text.
+    Token-level matching scans for the first Mu or Nu token.
+    String-level matching checks for "mu" or "nu" in decoded text.
     Disagreements between methods are flagged.
 
     Args:
         generated_ids: List of generated token IDs.
         generated_text: Decoded text of generated tokens.
-        expected_token: "Rho" or "Tau" -- the correct answer.
+        expected_token: "Mu" or "Nu" -- the correct answer.
 
     Returns:
         Dict with keys: answer, correct, no_answer, token_answer,
         string_answer, agreement.
     """
-    # Token-level matching
+    # Token-level matching (both Mu and Nu are single tokens)
     token_answer = None
-    for i, tid in enumerate(generated_ids):
-        if tid == TAU_TOKEN_ID:
-            token_answer = "Tau"
+    for tid in generated_ids:
+        if tid == MU_TOKEN_ID:
+            token_answer = "Mu"
             break
-        if tid == RHO_FIRST_TOKEN_ID:
-            if i + 1 < len(generated_ids) and generated_ids[i + 1] == RHO_TOKEN_IDS[1]:
-                token_answer = "Rho"
-                break
+        if tid == NU_TOKEN_ID:
+            token_answer = "Nu"
+            break
 
     # String-level matching
     string_answer = None
     text_lower = generated_text.lower()
-    rho_pos = text_lower.find("rho")
-    tau_pos = text_lower.find("tau")
+    mu_pos = text_lower.find("mu")
+    nu_pos = text_lower.find("nu")
 
-    if rho_pos >= 0 and tau_pos >= 0:
-        string_answer = "Rho" if rho_pos < tau_pos else "Tau"
-    elif rho_pos >= 0:
-        string_answer = "Rho"
-    elif tau_pos >= 0:
-        string_answer = "Tau"
+    if mu_pos >= 0 and nu_pos >= 0:
+        string_answer = "Mu" if mu_pos < nu_pos else "Nu"
+    elif mu_pos >= 0:
+        string_answer = "Mu"
+    elif nu_pos >= 0:
+        string_answer = "Nu"
 
     # Determine final answer and flags
     if token_answer is None and string_answer is None:
@@ -112,33 +110,33 @@ def extract_answer(generated_ids, generated_text, expected_token):
     }
 
 
-def extract_rho_tau_probs(first_logits, correct_first_token_id):
-    """Extract Rho/Tau probabilities and correct-token rank from logits.
+def extract_mu_nu_probs(first_logits, correct_token_id):
+    """Extract Mu/Nu probabilities and correct-token rank from logits.
 
     Args:
         first_logits: Logits tensor of shape [vocab_size] for the first
             generated token.
-        correct_first_token_id: Token ID of the correct answer's first
-            token (RHO_FIRST_TOKEN_ID or TAU_TOKEN_ID).
+        correct_token_id: Token ID of the correct answer
+            (MU_TOKEN_ID or NU_TOKEN_ID).
 
     Returns:
-        Dict with keys: rho_prob, tau_prob, correct_token_prob,
+        Dict with keys: mu_prob, nu_prob, correct_token_prob,
         correct_token_rank.
     """
     probs = torch.softmax(first_logits.float(), dim=-1)
-    rho_prob = probs[RHO_FIRST_TOKEN_ID].item()
-    tau_prob = probs[TAU_TOKEN_ID].item()
+    mu_prob = probs[MU_TOKEN_ID].item()
+    nu_prob = probs[NU_TOKEN_ID].item()
 
     # Compute rank of correct token (0-indexed, 0 = highest probability)
     sorted_indices = torch.argsort(probs, descending=True)
     rank_positions = torch.argsort(sorted_indices)
-    correct_token_rank = rank_positions[correct_first_token_id].item()
+    correct_token_rank = rank_positions[correct_token_id].item()
 
-    correct_token_prob = probs[correct_first_token_id].item()
+    correct_token_prob = probs[correct_token_id].item()
 
     return {
-        "rho_prob": rho_prob,
-        "tau_prob": tau_prob,
+        "mu_prob": mu_prob,
+        "nu_prob": nu_prob,
         "correct_token_prob": correct_token_prob,
         "correct_token_rank": correct_token_rank,
     }
@@ -180,11 +178,11 @@ def _worker(rank, gpu_id, items, cfg):
         # Determine expected answer
         ground_truth = problem["ground_truth"]
         if ground_truth == "Yes":
-            expected_token = label_mapping["valid"]   # "Rho" for config A
+            expected_token = label_mapping["valid"]   # "Mu" for config A
         else:
-            expected_token = label_mapping["invalid"]  # "Tau" for config A
+            expected_token = label_mapping["invalid"]  # "Nu" for config A
 
-        correct_first_token_id = RHO_FIRST_TOKEN_ID if expected_token == "Rho" else TAU_TOKEN_ID
+        correct_token_id = MU_TOKEN_ID if expected_token == "Mu" else NU_TOKEN_ID
 
         # Tokenize with chat template + enable_thinking=True
         messages = [{"role": "user", "content": prompt_info["verification_prompt"]}]
@@ -222,7 +220,7 @@ def _worker(rank, gpu_id, items, cfg):
             worker_logger.warning("No logits for problem %s", problem["problem_id"])
             first_logits = torch.zeros(raw_model.config.vocab_size, device=device)
 
-        prob_info = extract_rho_tau_probs(first_logits, correct_first_token_id)
+        prob_info = extract_mu_nu_probs(first_logits, correct_token_id)
 
         row = {
             "problem_id": problem["problem_id"],
@@ -232,8 +230,8 @@ def _worker(rank, gpu_id, items, cfg):
             "correct": answer_info["correct"],
             "answer": answer_info["answer"],
             "no_answer": answer_info["no_answer"],
-            "rho_prob": prob_info["rho_prob"],
-            "tau_prob": prob_info["tau_prob"],
+            "mu_prob": prob_info["mu_prob"],
+            "nu_prob": prob_info["nu_prob"],
             "correct_token_prob": prob_info["correct_token_prob"],
             "correct_token_rank": prob_info["correct_token_rank"],
             "token_answer": answer_info["token_answer"],

@@ -72,7 +72,7 @@ PATIENCE = 10
 # ---------------------------------------------------------------------------
 
 def determine_correctness(metadata: dict, generated_text: str) -> bool | None:
-    """Determine if the model answered correctly using Rho/Tau label mapping.
+    """Determine if the model answered correctly using Mu/Nu label mapping.
 
     If ground_truth is 'Yes', the correct response is valid_token.
     If ground_truth is 'No', the correct response is invalid_token.

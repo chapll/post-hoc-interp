@@ -5,7 +5,7 @@ model:
   max_new_tokens: 4096
 
 data:
-  # Swapped-label protocol: "swapped" uses Rho/Tau tokens with A/B configs,
+  # Swapped-label protocol: "swapped" uses Mu/Nu tokens with A/B configs,
   # "yesno" uses traditional Yes/No for backward compatibility.
   label_protocol: "swapped"
   # Reduced from 5 to 3 to offset config doubling (A + B variants).
