@@ -36,7 +36,7 @@ from src.utils import set_seed, setup_logging
 # ---------------------------------------------------------------------------
 MU_TOKEN_ID = 39120              # "Mu" (single token)
 NU_TOKEN_ID = 60335              # "Nu" (single token)
-CLOSE_TOKEN_IDS = [151668, 198]  # </think> + \n
+CLOSE_TOKEN_IDS = [151668, 271, 16141, 25, 220]  # </think>\n\nAnswer: (space)
 
 logger = logging.getLogger(__name__)
 
@@ -337,9 +337,9 @@ def probe_trace(raw_model, tokenizer, trace_data, cfg, device):
     """Probe a single trace at multiple positions using KV-cache truncation.
 
     For each probe position within the thinking block, truncates the
-    thinking content, appends the force-close sequence (</think> newline),
-    and generates a short continuation. Records the answer, logit
-    probabilities, and correct-token rank.
+    thinking content, appends '</think>\\n\\nAnswer: ', generates exactly
+    1 token, and reads P(Mu) and P(Nu) from the next-token logits.
+    The model is forced to commit to an answer immediately.
 
     Args:
         raw_model: Raw HuggingFace model (model._model).
@@ -402,35 +402,37 @@ def probe_trace(raw_model, tokenizer, trace_data, cfg, device):
             cache_len = len(prefix_ids) + pos
             cache.crop(cache_len)
 
-            # Build input: prefix + think_content[:pos] + close_tokens
-            input_for_generate = full_input_ids[:cache_len] + CLOSE_TOKEN_IDS
-            input_tensor = torch.tensor([input_for_generate], dtype=torch.long, device=device)
+            # Build input: prefix + think_content[:pos] + </think>\n\nAnswer:
+            input_ids_for_probe = full_input_ids[:cache_len] + CLOSE_TOKEN_IDS
+            input_tensor = torch.tensor([input_ids_for_probe], dtype=torch.long, device=device)
             attention_mask = torch.ones_like(input_tensor)
 
+            # Generate exactly 1 token to get logits
             with torch.no_grad():
                 gen_output = raw_model.generate(
                     input_ids=input_tensor,
                     attention_mask=attention_mask,
                     past_key_values=copy.deepcopy(cache),
-                    max_new_tokens=fa.max_new_tokens,
+                    max_new_tokens=1,
                     do_sample=False,
                     return_dict_in_generate=True,
                     output_logits=True,
                 )
 
-            generated_ids = gen_output.sequences[0, len(input_for_generate):].tolist()
-            generated_text = tokenizer.decode(generated_ids, skip_special_tokens=False)
-
-            # Extract first token logits
-            if len(gen_output.logits) > 0:
-                first_logits = gen_output.logits[0][0]  # shape [vocab_size]
-            else:
-                # No tokens generated -- create zero logits
-                logger.warning("No logits returned for probe pos %d", pos)
-                first_logits = torch.zeros(raw_model.config.vocab_size, device=device)
-
-            answer_info = extract_answer(generated_ids, generated_text, expected_token)
+            # Extract logits for the single generated token
+            first_logits = gen_output.logits[0][0]  # shape [vocab_size]
             prob_info = extract_mu_nu_probs(first_logits, correct_token_id)
+
+            # Determine answer from argmax of Mu vs Nu
+            generated_token_id = gen_output.sequences[0, -1].item()
+            if generated_token_id == MU_TOKEN_ID:
+                answer = "Mu"
+            elif generated_token_id == NU_TOKEN_ID:
+                answer = "Nu"
+            else:
+                answer = None
+
+            correct = (answer == expected_token) if answer else False
 
             normalized_position = pos / (think_length - 1) if think_length > 1 else 0.5
             correct_token_prob = prob_info["mu_prob"] if expected_token == "Mu" else prob_info["nu_prob"]
@@ -441,8 +443,8 @@ def probe_trace(raw_model, tokenizer, trace_data, cfg, device):
                 "problem_id": meta["problem_id"],
                 "probe_position": pos,
                 "normalized_position": normalized_position,
-                "correct": answer_info["correct"],
-                "no_answer": answer_info["no_answer"],
+                "correct": correct,
+                "no_answer": answer is None,
                 "mu_prob": prob_info["mu_prob"],
                 "nu_prob": prob_info["nu_prob"],
                 "correct_token_prob": correct_token_prob,
@@ -453,9 +455,7 @@ def probe_trace(raw_model, tokenizer, trace_data, cfg, device):
                 "prompt_config": meta.get("prompt_config", None),
                 "valid_token": valid_token,
                 "invalid_token": invalid_token,
-                "token_answer": answer_info["token_answer"],
-                "string_answer": answer_info["string_answer"],
-                "agreement": answer_info["agreement"],
+                "answer": answer,
                 "think_length": think_length,
             }
             results.append(row)
@@ -475,31 +475,32 @@ def probe_trace(raw_model, tokenizer, trace_data, cfg, device):
         results = []
         for pos in probe_positions:
             cache_len = len(prefix_ids) + pos
-            input_for_generate = full_input_ids[:cache_len] + CLOSE_TOKEN_IDS
-            input_tensor = torch.tensor([input_for_generate], dtype=torch.long, device=device)
+            input_ids_for_probe = full_input_ids[:cache_len] + CLOSE_TOKEN_IDS
+            input_tensor = torch.tensor([input_ids_for_probe], dtype=torch.long, device=device)
             attention_mask = torch.ones_like(input_tensor)
 
             with torch.no_grad():
                 gen_output = raw_model.generate(
                     input_ids=input_tensor,
                     attention_mask=attention_mask,
-                    max_new_tokens=fa.max_new_tokens,
+                    max_new_tokens=1,
                     do_sample=False,
                     return_dict_in_generate=True,
                     output_logits=True,
                 )
 
-            generated_ids = gen_output.sequences[0, len(input_for_generate):].tolist()
-            generated_text = tokenizer.decode(generated_ids, skip_special_tokens=False)
-
-            if len(gen_output.logits) > 0:
-                first_logits = gen_output.logits[0][0]
-            else:
-                logger.warning("No logits returned for probe pos %d (fallback)", pos)
-                first_logits = torch.zeros(raw_model.config.vocab_size, device=device)
-
-            answer_info = extract_answer(generated_ids, generated_text, expected_token)
+            first_logits = gen_output.logits[0][0]
             prob_info = extract_mu_nu_probs(first_logits, correct_token_id)
+
+            generated_token_id = gen_output.sequences[0, -1].item()
+            if generated_token_id == MU_TOKEN_ID:
+                answer = "Mu"
+            elif generated_token_id == NU_TOKEN_ID:
+                answer = "Nu"
+            else:
+                answer = None
+
+            correct = (answer == expected_token) if answer else False
 
             normalized_position = pos / (think_length - 1) if think_length > 1 else 0.5
             correct_token_prob = prob_info["mu_prob"] if expected_token == "Mu" else prob_info["nu_prob"]
@@ -510,8 +511,8 @@ def probe_trace(raw_model, tokenizer, trace_data, cfg, device):
                 "problem_id": meta["problem_id"],
                 "probe_position": pos,
                 "normalized_position": normalized_position,
-                "correct": answer_info["correct"],
-                "no_answer": answer_info["no_answer"],
+                "correct": correct,
+                "no_answer": answer is None,
                 "mu_prob": prob_info["mu_prob"],
                 "nu_prob": prob_info["nu_prob"],
                 "correct_token_prob": correct_token_prob,
@@ -522,9 +523,7 @@ def probe_trace(raw_model, tokenizer, trace_data, cfg, device):
                 "prompt_config": meta.get("prompt_config", None),
                 "valid_token": valid_token,
                 "invalid_token": invalid_token,
-                "token_answer": answer_info["token_answer"],
-                "string_answer": answer_info["string_answer"],
-                "agreement": answer_info["agreement"],
+                "answer": answer,
                 "think_length": think_length,
             }
             results.append(row)
@@ -582,8 +581,7 @@ REQUIRED_COLUMNS = [
     "normalized_position", "correct", "no_answer", "mu_prob",
     "nu_prob", "correct_token_prob", "correct_token_rank",
     "ground_truth", "is_correct_trace", "is_fresh", "prompt_config",
-    "valid_token", "invalid_token", "token_answer", "string_answer",
-    "agreement", "think_length",
+    "valid_token", "invalid_token", "answer", "think_length",
 ]
 
 

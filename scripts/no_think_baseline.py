@@ -37,7 +37,7 @@ from src.utils import set_seed, setup_logging
 # ---------------------------------------------------------------------------
 MU_TOKEN_ID = 39120              # "Mu" (single token)
 NU_TOKEN_ID = 60335              # "Nu" (single token)
-CLOSE_TOKEN_IDS = [151668, 198]  # </think> + \n
+CLOSE_TOKEN_IDS = [151668, 271, 16141, 25, 220]  # </think>\n\nAnswer: (space)
 
 logger = logging.getLogger(__name__)
 
