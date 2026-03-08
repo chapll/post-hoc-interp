@@ -8,12 +8,12 @@ force_answer:
   n_incorrect: 10                # target incorrect traces total
   num_probes: 20                 # probe points per trace
   min_probe_spacing: 5           # minimum tokens between probes
-  max_new_tokens: 15             # tokens to generate at each probe
+  max_new_tokens: 1              # generate exactly 1 token to read logits
   trace_index: 0                 # use trace_00 from each problem
   selection_seed: 137            # seed for trace selection RNG
 
   # Token IDs (verified from research)
-  close_token_ids: [151668, 198] # </think> + \n
+  close_token_ids: [151668, 271, 16141, 25, 220]  # </think>\n\nAnswer: (space)
   mu_token_id: 39120             # "Mu" (single token)
   nu_token_id: 60335             # "Nu" (single token)
 
