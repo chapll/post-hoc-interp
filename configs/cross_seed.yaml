@@ -25,8 +25,8 @@ cross_seed:
 
   # Token IDs (same as Phase 2.2)
   close_token_ids: [151668, 198]
-  rho_token_ids: [49, 6161]
-  tau_token_id: 92713
+  mu_token_id: 39120
+  nu_token_id: 60335
 
   # Interpolation
   interp_grid_points: 21      # np.linspace(0, 1, 21) for cross-seed comparison

@@ -4,7 +4,7 @@ Loads GSM-Symbolic, FOLIO, and StrategyQA from HuggingFace, converts each
 problem into base problem dicts with balanced Yes/No ground truth labels.
 
 Prompts are NOT built here. Use lib.prompts.build_verification_prompt() to
-construct prompts with configurable label tokens (Rho/Tau for swapped-label
+construct prompts with configurable label tokens (Mu/Nu for swapped-label
 protocol, or Yes/No for backward compatibility).
 
 Each loader returns a list of dicts with a uniform schema:

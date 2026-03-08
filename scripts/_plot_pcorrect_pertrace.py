@@ -58,16 +58,14 @@ probe.eval().to(device)
 print("Loading model...")
 model, tok = load_model(gpu_id=0)
 
-# Get the correct token IDs for Rho/Tau
-rho_token_id = tok.encode("Rho", add_special_tokens=False)
-tau_token_id = tok.encode("Tau", add_special_tokens=False)
-print(f"Rho token IDs: {rho_token_id}")
-print(f"Tau token IDs: {tau_token_id}")
+# Get the correct token IDs for Mu/Nu (both single tokens)
+mu_token_id = tok.encode("Mu", add_special_tokens=False)
+nu_token_id = tok.encode("Nu", add_special_tokens=False)
+print(f"Mu token IDs: {mu_token_id}")
+print(f"Nu token IDs: {nu_token_id}")
 
-# We need the single token for logit lens
-# Try the first token of each (should be single-token)
-rho_id = rho_token_id[0]
-tau_id = tau_token_id[0]
+mu_id = mu_token_id[0]
+nu_id = nu_token_id[0]
 
 # ---------------------------------------------------------------------------
 # Load force-answer data for comparison
@@ -128,14 +126,14 @@ for trace_idx, trace in enumerate(plot_traces):
     with open(metadata_path) as f:
         trace_data = json.load(f)
     meta = trace_data["metadata"]
-    valid_token = meta["valid_token"]    # "Rho" or "Tau"
+    valid_token = meta["valid_token"]    # "Mu" or "Nu"
     invalid_token = meta["invalid_token"]
     if gt == "Yes":
         correct_token_name = valid_token
     else:
         correct_token_name = invalid_token
 
-    correct_token_id = rho_id if correct_token_name == "Rho" else tau_id
+    correct_token_id = mu_id if correct_token_name == "Mu" else nu_id
 
     # Forward pass: get both layer LAYER residuals and final logits
     input_ids = torch.tensor([token_ids], dtype=torch.long, device=device)
@@ -177,13 +175,13 @@ for trace_idx, trace in enumerate(plot_traces):
     with torch.no_grad():
         for pos in eligible:
             logits_at_pos = final_logits[pos, :]  # [vocab_size]
-            # Get P(correct_token) via softmax over Rho and Tau only
-            rho_logit = logits_at_pos[rho_id].float()
-            tau_logit = logits_at_pos[tau_id].float()
+            # Get P(correct_token) via softmax over Mu and Nu only
+            mu_logit = logits_at_pos[mu_id].float()
+            nu_logit = logits_at_pos[nu_id].float()
             # Softmax over just these two
-            pair_logits = torch.stack([rho_logit, tau_logit])
+            pair_logits = torch.stack([mu_logit, nu_logit])
             pair_probs = F.softmax(pair_logits, dim=0)
-            if correct_token_name == "Rho":
+            if correct_token_name == "Mu":
                 p_correct_token = pair_probs[0].item()
             else:
                 p_correct_token = pair_probs[1].item()

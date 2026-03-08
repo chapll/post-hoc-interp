@@ -34,12 +34,11 @@ from src.utils import set_seed, setup_logging
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scripts.force_answer_experiment import (
     CLOSE_TOKEN_IDS,
-    RHO_FIRST_TOKEN_ID,
-    RHO_TOKEN_IDS,
-    TAU_TOKEN_ID,
+    MU_TOKEN_ID,
+    NU_TOKEN_ID,
     compute_probe_positions,
     extract_answer,
-    extract_rho_tau_probs,
+    extract_mu_nu_probs,
 )
 
 logger = logging.getLogger(__name__)
@@ -216,8 +215,8 @@ def main():
         valid_token = meta["valid_token"]
         invalid_token = meta["invalid_token"]
         expected_token = valid_token if ground_truth == "Yes" else invalid_token
-        correct_first_token_id = (
-            RHO_FIRST_TOKEN_ID if expected_token == "Rho" else TAU_TOKEN_ID
+        correct_token_id = (
+            MU_TOKEN_ID if expected_token == "Mu" else NU_TOKEN_ID
         )
 
         logger_main.info(
@@ -278,12 +277,12 @@ def main():
                 )
 
             answer_info = extract_answer(generated_ids, generated_text, expected_token)
-            prob_info = extract_rho_tau_probs(first_logits, correct_first_token_id)
+            prob_info = extract_mu_nu_probs(first_logits, correct_token_id)
 
             normalized_position = pos / (think_length - 1) if think_length > 1 else 0.5
             correct_token_prob = (
-                prob_info["rho_prob"] if expected_token == "Rho"
-                else prob_info["tau_prob"]
+                prob_info["mu_prob"] if expected_token == "Mu"
+                else prob_info["nu_prob"]
             )
 
             row = {
@@ -294,8 +293,8 @@ def main():
                 "normalized_position": normalized_position,
                 "correct": answer_info["correct"],
                 "no_answer": answer_info["no_answer"],
-                "rho_prob": prob_info["rho_prob"],
-                "tau_prob": prob_info["tau_prob"],
+                "mu_prob": prob_info["mu_prob"],
+                "nu_prob": prob_info["nu_prob"],
                 "correct_token_prob": correct_token_prob,
                 "correct_token_rank": prob_info["correct_token_rank"],
                 "ground_truth": ground_truth,
