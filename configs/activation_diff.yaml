@@ -1,0 +1,26 @@
+# Activation diffing experiment config
+# Merges on top of base.yaml via load_config("configs/activation_diff.yaml")
+#
+# Force-answers at the first N and last N thinking positions, captures
+# residual-stream activations via nnsight, filters traces where early
+# probes are wrong and late probes are right, and diffs the mean
+# activations to find a per-layer "knowing direction".
+
+activation_diff:
+  n_early: 3              # number of early-position probes
+  n_late: 3               # number of late-position probes
+  min_think_length: 20    # skip traces with fewer thinking tokens
+  trace_index: 0          # use trace_00 from each problem
+  early_threshold: 0      # max correct allowed in early (0 = all must be wrong)
+  late_threshold: 3       # min correct required in late (3 = all must be right)
+
+  # Token IDs (after ** prefix, model outputs bare Mu/Nu)
+  close_token_ids: [151668, 271, 16141, 25, 3070]  # </think>\n\nAnswer: **
+  mu_token_id: 39120      # "Mu" (bare, single token -- after **)
+  nu_token_id: 60335      # "Nu" (bare, single token -- after **)
+
+paths:
+  traces_dir: "data/traces"
+  output_dir: "experiments/activation_diff"
+
+gpus: [0, 1, 2, 3]

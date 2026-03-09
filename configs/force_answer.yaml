@@ -12,10 +12,10 @@ force_answer:
   trace_index: 0                 # use trace_00 from each problem
   selection_seed: 137            # seed for trace selection RNG
 
-  # Token IDs (verified from research)
-  close_token_ids: [151668, 271, 16141, 25, 220]  # </think>\n\nAnswer: (space)
-  mu_token_id: 39120             # "Mu" (single token)
-  nu_token_id: 60335             # "Nu" (single token)
+  # Token IDs (after ** prefix, model outputs bare Mu/Nu)
+  close_token_ids: [151668, 271, 16141, 25, 3070]  # </think>\n\nAnswer: **
+  mu_token_id: 39120             # "Mu" (bare, single token -- after **)
+  nu_token_id: 60335             # "Nu" (bare, single token -- after **)
 
 paths:
   traces_dir: "${paths.data_dir}/traces"

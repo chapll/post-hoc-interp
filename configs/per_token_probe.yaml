@@ -27,10 +27,10 @@ per_token_probe:
   # Memory management
   empty_cache_interval: 100       # call torch.cuda.empty_cache() every N probes
 
-  # Token IDs (same as Phase 2.2/2.3)
-  close_token_ids: [151668, 198]  # </think> + \n
-  mu_token_id: 39120              # "Mu" (single token)
-  nu_token_id: 60335              # "Nu" (single token)
+  # Token IDs (after ** prefix, model outputs bare Mu/Nu)
+  close_token_ids: [151668, 198]  # </think> + \n (per_token_probe generates, doesn't force-answer)
+  mu_token_id: 39120              # "Mu" (bare, single token -- after **)
+  nu_token_id: 60335              # "Nu" (bare, single token -- after **)
 
 paths:
   traces_dir: "${paths.data_dir}/traces"

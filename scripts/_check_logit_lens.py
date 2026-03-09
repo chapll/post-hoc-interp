@@ -27,8 +27,8 @@ final_logits = saved_final.detach().squeeze(0)
 mask = get_think_content_mask(token_ids)
 eligible = [i for i, m in enumerate(mask) if m]
 
-mu_id = 39120  # "Mu" (single token)
-nu_id = 60335  # "Nu" (single token)
+mu_id = 39120  # "Mu" (bare, single token -- after ** prefix)
+nu_id = 60335  # "Nu" (bare, single token -- after ** prefix)
 
 positions = [
     eligible[0],

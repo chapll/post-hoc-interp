@@ -23,10 +23,10 @@ cross_seed:
   n_incorrect: 10
   trace_index: 0              # Phase 2.2 used trace_00 for selection
 
-  # Token IDs (same as Phase 2.2)
-  close_token_ids: [151668, 198]
-  mu_token_id: 39120
-  nu_token_id: 60335
+  # Token IDs (after ** prefix, model outputs bare Mu/Nu)
+  close_token_ids: [151668, 198]  # cross_seed generates, doesn't force-answer
+  mu_token_id: 39120              # "Mu" (bare, single token -- after **)
+  nu_token_id: 60335              # "Nu" (bare, single token -- after **)
 
   # Interpolation
   interp_grid_points: 21      # np.linspace(0, 1, 21) for cross-seed comparison

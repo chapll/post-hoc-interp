@@ -35,9 +35,9 @@ from src.utils import set_seed, setup_logging
 # ---------------------------------------------------------------------------
 # Token constants (verified: Mu and Nu are each single tokens)
 # ---------------------------------------------------------------------------
-MU_TOKEN_ID = 39120              # "Mu" (single token)
-NU_TOKEN_ID = 60335              # "Nu" (single token)
-CLOSE_TOKEN_IDS = [151668, 271, 16141, 25, 220]  # </think>\n\nAnswer: (space)
+MU_TOKEN_ID = 39120              # "Mu" (bare, single token -- after ** prefix)
+NU_TOKEN_ID = 60335              # "Nu" (bare, single token -- after ** prefix)
+CLOSE_TOKEN_IDS = [151668, 271, 16141, 25, 3070]  # </think>\n\nAnswer: **
 
 logger = logging.getLogger(__name__)
 
