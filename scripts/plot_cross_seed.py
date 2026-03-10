@@ -49,12 +49,14 @@ DATASET_COLORS = {
     "gsm_symbolic": "#0077BB",
     "folio": "#EE7733",
     "strategyqa": "#009988",
+    "deepmath": "#CC3311",
 }
 
 DATASET_LABELS = {
     "gsm_symbolic": "GSM-Symbolic",
     "folio": "FOLIO",
     "strategyqa": "StrategyQA",
+    "deepmath": "DeepMath",
 }
 
 # Total seeds per problem (for display in plot titles)

@@ -28,7 +28,7 @@ from src.utils import set_seed
 
 set_seed(137)
 
-DATASETS = ["gsm_symbolic", "strategyqa", "folio"]
+DATASETS = ["gsm_symbolic", "strategyqa", "folio", "deepmath"]
 TRACE_BASE = "src/experimental/gorn/data/traces/valid"
 FA_PARQUET = "src/experimental/gorn/experiments/force_answer/results.parquet"
 PROBE_DIR = "outputs/multilayer_probe/force_answer_probe"
