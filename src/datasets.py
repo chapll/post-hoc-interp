@@ -555,6 +555,120 @@ def load_deepmath(n: int = 300, seed: int = 137) -> list[dict]:
     return _balance_and_sample(items, n, rng, "deepmath")
 
 
+def load_deepmath_pool(
+    pool: str,
+    n: int = 300,
+    seed: int = 137,
+    binary: bool = True,
+) -> list[dict]:
+    """Load DeepMath problems from a specific non-overlapping pool.
+
+    Pools use disjoint index ranges from the full DeepMath-103K dataset to
+    guarantee zero leakage between direction extraction, sleeper training,
+    evaluation, and transferability testing.
+
+    Pool allocations (by HF dataset row index, after filtering to numeric):
+        A (direction):    rows 0-2999      (seed_offset=1000)
+        B (sleeper SFT):  rows 3000-5999   (seed_offset=2000)
+        C (evaluation):   rows 6000-7999   (seed_offset=3000)
+        D (binary xfer):  rows 8000-8999   (seed_offset=4000)
+        E (nonbinary):    rows 9000-9999   (seed_offset=5000)
+
+    Args:
+        pool: One of "A", "B", "C", "D", "E".
+        n: Target number of problems (balanced Yes/No for binary).
+        seed: Base seed (combined with pool offset for reproducibility).
+        binary: If True, create Mu/Nu verification items. If False, create
+            freeform items (for non-binary transferability testing).
+
+    Returns:
+        List of problem dicts. Binary mode returns Yes/No verification pairs.
+        Non-binary mode returns raw problems with ground_truth answer.
+    """
+    pool_ranges = {
+        "A": (0, 3000),
+        "B": (3000, 6000),
+        "C": (6000, 8000),
+        "D": (8000, 9000),
+        "E": (9000, 10000),
+    }
+    pool_seed_offsets = {"A": 1000, "B": 2000, "C": 3000, "D": 4000, "E": 5000}
+
+    if pool not in pool_ranges:
+        raise ValueError(f"Unknown pool: '{pool}'. Available: {sorted(pool_ranges)}")
+
+    start_idx, end_idx = pool_ranges[pool]
+    rng = random.Random(seed + pool_seed_offsets[pool])
+
+    ds = load_dataset("zwhe99/DeepMath-103K", split="train")
+    logger.info("DeepMath pool %s: loaded %d rows, filtering indices %d-%d",
+                pool, len(ds), start_idx, end_idx)
+
+    # Filter to numeric answers within pool's index range
+    numeric_rows = []
+    for idx, row in enumerate(ds):
+        raw_answer = row["final_answer"].strip()
+        try:
+            correct_value = int(raw_answer)
+        except ValueError:
+            try:
+                correct_value = float(raw_answer)
+            except ValueError:
+                continue
+        numeric_rows.append((idx, row, correct_value))
+
+    # Select rows within this pool's range
+    pool_rows = numeric_rows[start_idx:end_idx]
+    logger.info("DeepMath pool %s: %d numeric rows in range", pool, len(pool_rows))
+
+    if not binary:
+        # Non-binary: return raw problems for freeform solving
+        items = []
+        for idx, row, correct_value in pool_rows:
+            items.append({
+                "problem_id": f"deepmath_{idx}_freeform",
+                "question": row["question"],
+                "ground_truth": str(correct_value),
+                "dataset_name": "deepmath_freeform",
+                "original_answer": str(correct_value),
+                "presented_answer": str(correct_value),
+                "difficulty": row.get("difficulty", ""),
+                "topic": row.get("topic", ""),
+            })
+        rng.shuffle(items)
+        return items[:n]
+
+    # Binary: create Yes/No verification pairs (same as load_deepmath)
+    items = []
+    for idx, row, correct_value in pool_rows:
+        distractor = _generate_distractor(correct_value, rng)
+        correct_str = str(correct_value)
+        distractor_str = str(distractor)
+
+        base = {
+            "question": row["question"],
+            "dataset_name": "deepmath",
+            "original_answer": correct_str,
+            "difficulty": row.get("difficulty", ""),
+            "topic": row.get("topic", ""),
+        }
+
+        items.append({
+            **base,
+            "problem_id": f"deepmath_{idx}_true",
+            "ground_truth": "Yes",
+            "presented_answer": correct_str,
+        })
+        items.append({
+            **base,
+            "problem_id": f"deepmath_{idx}_false",
+            "ground_truth": "No",
+            "presented_answer": distractor_str,
+        })
+
+    return _balance_and_sample(items, n, rng, f"deepmath_pool_{pool}")
+
+
 def load_dataset_by_name(name: str, n: int = 300, seed: int = 137) -> list[dict]:
     """Dispatch to the appropriate dataset loader by name.
 

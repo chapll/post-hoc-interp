@@ -129,3 +129,54 @@ def _build_deepmath_prompt(problem: dict, valid_word: str, invalid_word: str) ->
         f"If it is not correct, output exactly the word: {invalid_word}.\n"
         f"Please think step-by-step to verify whether the answer is correct."
     )
+
+
+def build_freeform_prompt(problem: dict) -> dict:
+    """Build a freeform (non-binary) prompt for transferability testing.
+
+    Instead of Mu/Nu verification, the model solves the problem and gives
+    its final answer directly. Used for testing whether directions extracted
+    from binary-format traces transfer to freeform reasoning.
+
+    Args:
+        problem: Problem dict with question and dataset_name fields.
+
+    Returns:
+        Dict with verification_prompt (freeform), prompt_config=None,
+        label_mapping=None.
+    """
+    dataset_name = problem["dataset_name"]
+
+    if dataset_name in ("deepmath", "deepmath_freeform"):
+        prompt = (
+            f"{problem['question']}\n\n"
+            f"Please think step-by-step and give your final numerical answer."
+        )
+    elif dataset_name == "gsm_symbolic":
+        prompt = (
+            f"{problem['question']}\n\n"
+            f"Please think step-by-step and give your final numerical answer."
+        )
+    elif dataset_name == "folio":
+        prompt = (
+            f"Given the following premises:\n"
+            f"{problem.get('premises', '')}\n\n"
+            f'Does the following conclusion logically follow: "{problem["question"]}"?\n'
+            f"Please think step-by-step and give your final answer (True or False)."
+        )
+    elif dataset_name == "strategyqa":
+        prompt = (
+            f"Answer the following question: {problem['question']}\n"
+            f"Please think step-by-step and give your final answer (Yes or No)."
+        )
+    else:
+        prompt = (
+            f"{problem['question']}\n\n"
+            f"Please think step-by-step and give your final answer."
+        )
+
+    return {
+        "verification_prompt": prompt,
+        "prompt_config": None,
+        "label_mapping": None,
+    }
