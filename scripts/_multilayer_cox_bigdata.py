@@ -38,7 +38,7 @@ set_seed(137)
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-DATASETS = ["gsm_symbolic", "strategyqa", "folio"]
+DATASETS = ["gsm_symbolic", "strategyqa", "folio", "deepmath"]
 TRACE_BASE = "src/experimental/gorn/data/traces/valid"
 OUTPUT_DIR = "outputs/multilayer_probe"
 LAYERS = [4, 8, 12, 16, 20, 24, 28, 32]
@@ -630,9 +630,9 @@ def main():
     fig, (ax1, ax2, ax3, ax4) = plt.subplots(1, 4, figsize=(26, 6))
 
     ds_colors = {"gsm_symbolic": "#0077BB", "strategyqa": "#009988",
-                 "folio": "#EE7733", "all": "#2c3e50"}
+                 "folio": "#EE7733", "deepmath": "#CC3311", "all": "#2c3e50"}
     ds_labels = {"gsm_symbolic": "GSM-Symbolic", "strategyqa": "StrategyQA",
-                 "folio": "FOLIO", "all": "All Combined"}
+                 "folio": "FOLIO", "deepmath": "DeepMath", "all": "All Combined"}
 
     # Panel 1: Within-CV AUROC
     for ds in DATASETS + ["all"]:

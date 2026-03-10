@@ -65,7 +65,7 @@ def load_traces_for_experiment(traces_dir, cfg):
     trace_filename = f"trace_{trace_index:02d}.json"
 
     valid_dir = os.path.join(traces_dir, "valid")
-    datasets = ["gsm_symbolic", "folio", "strategyqa"]
+    datasets = ["gsm_symbolic", "folio", "strategyqa", "deepmath"]
 
     # Collect all eligible traces per dataset, split by correctness
     correct_by_ds = {ds: [] for ds in datasets}

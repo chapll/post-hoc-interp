@@ -35,7 +35,7 @@ from src.utils import set_seed
 
 set_seed(137)
 
-DATASETS = ["gsm_symbolic", "strategyqa", "folio"]
+DATASETS = ["gsm_symbolic", "strategyqa", "folio", "deepmath"]
 TRACE_BASE = "src/experimental/gorn/data/traces/valid"
 OUTPUT_DIR = "outputs/multilayer_probe/pca_probe"
 LAYER = 20

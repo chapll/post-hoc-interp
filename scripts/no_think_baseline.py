@@ -271,7 +271,7 @@ def main():
     logger_main.info("Problems per dataset: %d", n_per_dataset)
 
     # Load all 3 datasets
-    dataset_names = ["gsm_symbolic", "folio", "strategyqa"]
+    dataset_names = ["gsm_symbolic", "folio", "strategyqa", "deepmath"]
     all_items = []
     for ds_name in dataset_names:
         problems = load_dataset_by_name(ds_name, n=n_per_dataset, seed=cfg.seed)

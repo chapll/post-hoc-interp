@@ -433,6 +433,7 @@ def generate_all_traces(config: dict) -> dict:
         Aggregated results dict with total counts.
     """
     from src.datasets import (
+        load_deepmath,
         load_folio,
         load_gsm_symbolic_contamination,
         load_strategyqa,
@@ -444,6 +445,7 @@ def generate_all_traces(config: dict) -> dict:
     gsm_problems_per_type = config["data"]["gsm_problems_per_type"]
     folio_problems = config["data"]["folio_problems"]
     strategyqa_problems = config["data"]["strategyqa_problems"]
+    deepmath_problems = config["data"]["deepmath_problems"]
     traces_per_problem = config["data"]["traces_per_problem"]
     seed = config["seed"]
 
@@ -459,7 +461,10 @@ def generate_all_traces(config: dict) -> dict:
     strategyqa_probs = load_strategyqa(n=strategyqa_problems, seed=seed)
     print(f"StrategyQA: {len(strategyqa_probs)} problems")
 
-    all_problems = gsm_probs + folio_probs + strategyqa_probs
+    deepmath_probs = load_deepmath(n=deepmath_problems, seed=seed)
+    print(f"DeepMath: {len(deepmath_probs)} problems")
+
+    all_problems = gsm_probs + folio_probs + strategyqa_probs + deepmath_probs
     print(f"Total base problems: {len(all_problems)}")
 
     # Apply swapped-label protocol (A/B configs)
@@ -541,6 +546,7 @@ def main(
     gsm_problems: int = None,
     folio_problems: int = None,
     strategyqa_problems: int = None,
+    deepmath_problems: int = None,
     traces_per_problem: int = None,
 ):
     """Entry point for `modal run scripts/modal_generate.py`.
@@ -556,6 +562,7 @@ def main(
         gsm_problems: Override data.gsm_problems_per_type from config.
         folio_problems: Override data.folio_problems from config.
         strategyqa_problems: Override data.strategyqa_problems from config.
+        deepmath_problems: Override data.deepmath_problems from config.
         traces_per_problem: Override data.traces_per_problem from config.
     """
     if download_only:
@@ -583,6 +590,8 @@ def main(
         cfg["data"]["folio_problems"] = folio_problems
     if strategyqa_problems is not None:
         cfg["data"]["strategyqa_problems"] = strategyqa_problems
+    if deepmath_problems is not None:
+        cfg["data"]["deepmath_problems"] = deepmath_problems
     if traces_per_problem is not None:
         cfg["data"]["traces_per_problem"] = traces_per_problem
 
@@ -591,6 +600,7 @@ def main(
     print(f"  GSM problems per type: {cfg['data']['gsm_problems_per_type']}")
     print(f"  FOLIO problems: {cfg['data']['folio_problems']}")
     print(f"  StrategyQA problems: {cfg['data']['strategyqa_problems']}")
+    print(f"  DeepMath problems: {cfg['data']['deepmath_problems']}")
     print(f"  Traces per problem: {cfg['data']['traces_per_problem']}")
     print(f"  Generation params: temp={cfg['generation']['temperature']}, "
           f"top_p={cfg['generation']['top_p']}, top_k={cfg['generation']['top_k']}")

@@ -892,8 +892,8 @@ def plot_auroc_comparison(
     # Collect scopes (datasets + pooled)
     scopes = sorted(s for s in cv_results if s != "pooled") + ["pooled"]
 
-    colors = {"gsm_symbolic": "#1f77b4", "folio": "#ff7f0e", "strategyqa": "#2ca02c", "pooled": "#d62728"}
-    markers = {"gsm_symbolic": "o", "folio": "s", "strategyqa": "^", "pooled": "D"}
+    colors = {"gsm_symbolic": "#1f77b4", "folio": "#ff7f0e", "strategyqa": "#2ca02c", "deepmath": "#CC3311", "pooled": "#d62728"}
+    markers = {"gsm_symbolic": "o", "folio": "s", "strategyqa": "^", "deepmath": "v", "pooled": "D"}
 
     for scope in scopes:
         aurocs = []

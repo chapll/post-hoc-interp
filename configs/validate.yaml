@@ -6,6 +6,7 @@ data:
     - gsm_symbolic
     - folio
     - strategyqa
+    - deepmath
   problems_per_dataset: 6
 
 model:

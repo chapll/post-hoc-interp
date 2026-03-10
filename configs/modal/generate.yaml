@@ -32,6 +32,8 @@ data:
   folio_problems: 10
   # StrategyQA: commonsense reasoning problems
   strategyqa_problems: 10
+  # DeepMath: advanced math problems (numeric-only)
+  deepmath_problems: 10
 
 # Random seed for reproducibility
 seed: 137
