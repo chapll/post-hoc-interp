@@ -64,6 +64,8 @@ def build_verification_prompt(
         prompt = _build_folio_prompt(problem, valid_word, invalid_word)
     elif dataset_name == "strategyqa":
         prompt = _build_strategyqa_prompt(problem, valid_word, invalid_word)
+    elif dataset_name == "deepmath":
+        prompt = _build_deepmath_prompt(problem, valid_word, invalid_word)
     else:
         raise ValueError(f"Unknown dataset_name: {dataset_name}")
 
@@ -112,4 +114,18 @@ def _build_strategyqa_prompt(problem: dict, valid_word: str, invalid_word: str) 
         f"If the answer is yes, output exactly the word: {valid_word}. "
         f"If the answer is no, output exactly the word: {invalid_word}.\n"
         f"Please think step-by-step to verify your answer."
+    )
+
+
+def _build_deepmath_prompt(problem: dict, valid_word: str, invalid_word: str) -> str:
+    """Build DeepMath verification prompt."""
+    question = problem["question"]
+    presented_answer = problem["presented_answer"]
+
+    return (
+        f"{question}\n\n"
+        f"Is the answer {presented_answer}? "
+        f"If it is correct, output exactly the word: {valid_word}. "
+        f"If it is not correct, output exactly the word: {invalid_word}.\n"
+        f"Please think step-by-step to verify whether the answer is correct."
     )

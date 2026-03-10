@@ -44,12 +44,14 @@ DATASET_COLORS = {
     "gsm_symbolic": "#0077BB",  # blue
     "folio": "#EE7733",         # orange
     "strategyqa": "#009988",    # teal
+    "deepmath": "#CC3311",      # red
 }
 
 DATASET_LABELS = {
     "gsm_symbolic": "GSM-Symbolic",
     "folio": "FOLIO",
     "strategyqa": "StrategyQA",
+    "deepmath": "DeepMath",
 }
 
 N_POSITION_BINS = 25

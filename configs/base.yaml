@@ -14,6 +14,7 @@ data:
     - gsm_symbolic
     - folio
     - strategyqa
+    - deepmath
   problems_per_dataset: 300
   traces_per_problem: 5
 

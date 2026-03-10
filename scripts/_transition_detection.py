@@ -37,7 +37,7 @@ from src.utils import set_seed
 
 set_seed(137)
 
-DATASETS = ["gsm_symbolic", "strategyqa", "folio"]
+DATASETS = ["gsm_symbolic", "strategyqa", "folio", "deepmath"]
 TRACE_BASE = "src/experimental/gorn/data/traces/valid"
 OUTPUT_DIR = "outputs/multilayer_probe/transition_detection"
 LAYER = 20
@@ -379,7 +379,7 @@ def main():
         trans_results = [r for r in all_results if r["transition_pos"] is not None]
         x = [r["n_think_tokens"] for r in trans_results]
         y = [r["transition_pos"] for r in trans_results]
-        colors_map = {"gsm_symbolic": "#e74c3c", "strategyqa": "#3498db", "folio": "#2ecc71"}
+        colors_map = {"gsm_symbolic": "#e74c3c", "strategyqa": "#3498db", "folio": "#2ecc71", "deepmath": "#CC3311"}
         for ds in DATASETS:
             ds_r = [r for r in trans_results if r["dataset"] == ds]
             if not ds_r:

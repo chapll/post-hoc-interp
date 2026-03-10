@@ -21,7 +21,7 @@ from src.model import HIDDEN_DIM, load_model
 from src.tokens import count_think_blocks, get_pre_handoff_window, get_think_content_mask
 from src.utils import set_seed
 
-DATASETS = ["gsm_symbolic", "strategyqa", "folio"]
+DATASETS = ["gsm_symbolic", "strategyqa", "folio", "deepmath"]
 TRACE_BASE = "src/experimental/gorn/data/traces/valid"
 OUTPUT_DIR = "outputs/multilayer_probe"
 LAYER = 20

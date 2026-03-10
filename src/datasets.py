@@ -1,7 +1,8 @@
 """Dataset loaders for binary verification format.
 
-Loads GSM-Symbolic, FOLIO, and StrategyQA from HuggingFace, converts each
-problem into base problem dicts with balanced Yes/No ground truth labels.
+Loads GSM-Symbolic, FOLIO, StrategyQA, and DeepMath-103K from HuggingFace,
+converts each problem into base problem dicts with balanced Yes/No ground
+truth labels.
 
 Prompts are NOT built here. Use lib.prompts.build_verification_prompt() to
 construct prompts with configurable label tokens (Mu/Nu for swapped-label
@@ -11,10 +12,12 @@ Each loader returns a list of dicts with a uniform schema:
     problem_id: str           -- unique ID: "{dataset}_{index}"
     question: str             -- original question text
     ground_truth: str         -- "Yes" or "No" (abstract validity label)
-    dataset_name: str         -- "gsm_symbolic", "folio", "strategyqa"
+    dataset_name: str         -- "gsm_symbolic", "folio", "strategyqa", "deepmath"
     original_answer: str      -- original answer from dataset
     presented_answer: str     -- what was presented for verification
     premises: str             -- (FOLIO only) formatted premises string
+    difficulty: str           -- (DeepMath only) problem difficulty level
+    topic: str                -- (DeepMath only) problem topic/category
 """
 
 import logging
@@ -472,11 +475,91 @@ def _parse_gsm_answer(answer_text: str, context: str) -> int | float | None:
             return None
 
 
+def load_deepmath(n: int = 300, seed: int = 137) -> list[dict]:
+    """Load DeepMath-103K in binary verification format, filtering to numeric answers.
+
+    For each problem with a numeric final_answer, creates two items:
+    - Yes item: "Is the answer {correct}?" with ground_truth="Yes"
+    - No item: "Is the answer {distractor}?" with ground_truth="No"
+
+    Non-numeric answers (symbolic, LaTeX, etc.) are skipped.
+    Distractors are generated via _generate_distractor().
+
+    Args:
+        n: Target number of problems (balanced n/2 Yes + n/2 No).
+        seed: Random seed for reproducibility.
+
+    Returns:
+        List of problem dicts in uniform schema with extra difficulty/topic fields.
+    """
+    rng = random.Random(seed)
+    ds = load_dataset("zwhe99/DeepMath-103K", split="train")
+    logger.info("DeepMath: loaded %d rows", len(ds))
+
+    items = []
+    skipped = 0
+    for idx, row in enumerate(ds):
+        question = row["question"]
+        raw_answer = row["final_answer"].strip()
+
+        # Parse numeric answer: try int then float, skip non-numeric
+        try:
+            correct_value = int(raw_answer)
+        except ValueError:
+            try:
+                correct_value = float(raw_answer)
+            except ValueError:
+                skipped += 1
+                continue
+
+        # Generate distractor: small perturbation of correct answer
+        distractor = _generate_distractor(correct_value, rng)
+        correct_str = str(correct_value)
+        distractor_str = str(distractor)
+
+        base = {
+            "question": question,
+            "dataset_name": "deepmath",
+            "original_answer": correct_str,
+            "difficulty": row.get("difficulty", ""),
+            "topic": row.get("topic", ""),
+        }
+
+        # Yes item: correct answer presented
+        items.append(
+            {
+                **base,
+                "problem_id": f"deepmath_{idx}_true",
+                "ground_truth": "Yes",
+                "presented_answer": correct_str,
+            }
+        )
+
+        # No item: distractor presented
+        items.append(
+            {
+                **base,
+                "problem_id": f"deepmath_{idx}_false",
+                "ground_truth": "No",
+                "presented_answer": distractor_str,
+            }
+        )
+
+    logger.info(
+        "DeepMath: generated %d verification items from %d rows (%d non-numeric skipped)",
+        len(items),
+        len(ds),
+        skipped,
+    )
+
+    return _balance_and_sample(items, n, rng, "deepmath")
+
+
 def load_dataset_by_name(name: str, n: int = 300, seed: int = 137) -> list[dict]:
     """Dispatch to the appropriate dataset loader by name.
 
     Args:
-        name: One of "gsm_symbolic", "gsm_symbolic_contamination", "folio", "strategyqa".
+        name: One of "gsm_symbolic", "gsm_symbolic_contamination", "folio", "strategyqa", "deepmath".
         n: Target number of problems.
         seed: Random seed for reproducibility.
 
@@ -493,6 +576,7 @@ def load_dataset_by_name(name: str, n: int = 300, seed: int = 137) -> list[dict]
         "gsm_symbolic": load_gsm_symbolic,
         "folio": load_folio,
         "strategyqa": load_strategyqa,
+        "deepmath": load_deepmath,
     }
 
     if name not in loaders:

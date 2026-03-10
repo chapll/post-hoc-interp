@@ -40,7 +40,7 @@ from src.utils import set_seed
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-DATASETS = ["gsm_symbolic", "strategyqa", "folio"]
+DATASETS = ["gsm_symbolic", "strategyqa", "folio", "deepmath"]
 TRACE_BASE = "src/experimental/gorn/data/traces/valid"
 OUTPUT_DIR = "outputs/multilayer_probe"
 LAYERS = [8, 16, 20, 24, 28, 32]

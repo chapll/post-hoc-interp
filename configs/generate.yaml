@@ -17,6 +17,7 @@ data:
   gsm_problems_per_type: 100
   folio_problems: 100
   strategyqa_problems: 100
+  deepmath_problems: 100
 
 paths:
   traces_dir: "${paths.data_dir}/traces"
