@@ -32,7 +32,7 @@ DATA_DIR = "data/sleeper_sft"
 OUTPUT_BASE = "experiments/sleeper_agent"
 
 MODEL_NAME = "Qwen/Qwen3-8B"
-MAX_SEQ_LENGTH = 2048
+MAX_SEQ_LENGTH = 16384
 
 # LoRA config
 LORA_R = 16
@@ -68,10 +68,16 @@ def main():
                         help="Override data path (default: data/sleeper_sft/approach_{approach}.jsonl)")
     parser.add_argument("--output", type=str, default=None,
                         help="Override output dir (default: experiments/sleeper_agent/approach_{approach})")
+    parser.add_argument("--batch-size", type=int, default=None,
+                        help="Override per-device batch size (default: 1)")
+    parser.add_argument("--grad-accum", type=int, default=None,
+                        help="Override gradient accumulation steps (default: 8)")
     args = parser.parse_args()
 
     approach = args.approach
     num_epochs = args.epochs if args.epochs else NUM_EPOCHS
+    batch_size = args.batch_size if args.batch_size else BATCH_SIZE
+    grad_accum = args.grad_accum if args.grad_accum else GRAD_ACCUM
     output_dir = args.output or os.path.join(OUTPUT_BASE, f"approach_{approach}")
 
     print(f"Training sleeper agent -- Approach {approach.upper()}")
@@ -98,12 +104,22 @@ def main():
         tokenizer.pad_token = tokenizer.eos_token
 
     # Load model
-    print("Loading model...")
-    model = AutoModelForCausalLM.from_pretrained(
-        MODEL_NAME,
-        torch_dtype=torch.bfloat16,
-        device_map="auto",
-    )
+    # DDP mode (torchrun): each process loads full model on its GPU, no device_map
+    # Single GPU mode: use device_map="auto"
+    local_rank = int(os.environ.get("LOCAL_RANK", -1))
+    if local_rank >= 0:
+        print(f"Loading model (DDP, local_rank={local_rank})...")
+        model = AutoModelForCausalLM.from_pretrained(
+            MODEL_NAME,
+            dtype=torch.bfloat16,
+        )
+    else:
+        print("Loading model (single GPU)...")
+        model = AutoModelForCausalLM.from_pretrained(
+            MODEL_NAME,
+            dtype=torch.bfloat16,
+            device_map="auto",
+        )
 
     # LoRA config
     print("Applying LoRA...")
@@ -126,8 +142,8 @@ def main():
     training_args = SFTConfig(
         output_dir=output_dir,
         num_train_epochs=num_epochs,
-        per_device_train_batch_size=BATCH_SIZE,
-        gradient_accumulation_steps=GRAD_ACCUM,
+        per_device_train_batch_size=batch_size,
+        gradient_accumulation_steps=grad_accum,
         learning_rate=LEARNING_RATE,
         warmup_ratio=WARMUP_RATIO,
         weight_decay=WEIGHT_DECAY,
