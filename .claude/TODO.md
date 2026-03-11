@@ -26,7 +26,7 @@
 
 ## Monitor
 ```bash
-ssh ampere9 "echo 'Argon@224R_esearch231N' | kinit 2>/dev/null && aklog 2>/dev/null && tail -5 /dfs/scratch2/gorn/post-hoc-interp/logs/full_pipeline.log"
+ssh ampere9 "kinit 2>/dev/null && aklog 2>/dev/null && tail -5 /dfs/scratch2/gorn/post-hoc-interp/logs/full_pipeline.log"
 ```
 
 ## Completion Checks

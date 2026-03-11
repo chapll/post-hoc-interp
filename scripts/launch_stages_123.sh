@@ -1,5 +1,5 @@
 #!/bin/bash
-echo 'Argon@224R_esearch231N' | kinit && aklog
+kinit && aklog
 cd /dfs/scratch2/gorn/post-hoc-interp
 export PATH="/usr/local/cuda/bin:$PATH"
 export CUDA_HOME=/usr/local/cuda

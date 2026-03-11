@@ -2,7 +2,7 @@
 # Full scaled-up pipeline: Stages 0-7 on ampere9 with 8 GPUs.
 # Runs autonomously. Each stage checks its dependencies and proceeds.
 set -eo pipefail
-echo 'Argon@224R_esearch231N' | kinit && aklog
+kinit && aklog
 cd /dfs/scratch2/gorn/post-hoc-interp
 export PATH="/usr/local/cuda/bin:$PATH"
 export CUDA_HOME=/usr/local/cuda

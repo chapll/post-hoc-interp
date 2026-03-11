@@ -1,7 +1,7 @@
 #!/bin/bash
 # Launch Stages 4-7 as their dependencies become available.
 # Stage 5,6,7 need Stage 2 (directions). Stage 4 needs Stage 1 + Stage 2.
-echo 'Argon@224R_esearch231N' | kinit && aklog
+kinit && aklog
 cd /dfs/scratch2/gorn/post-hoc-interp
 export PATH="/usr/local/cuda/bin:$PATH"
 export CUDA_HOME=/usr/local/cuda

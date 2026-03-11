@@ -34,29 +34,12 @@ Stage 0 (generate all traces)
 - Stages 4-7 need Stages 1+2 done, but are all independent of each other
 - Stage 7 uses v1 traces (already exist), so only needs Stage 2 directions
 
-## Setup (all machines)
-
-```bash
-# Must run this every SSH session for DFS access
-echo 'Argon@224R_esearch231N' | kinit && aklog
-
-# Project directory
-cd /dfs/scratch2/gorn/post-hoc-interp
-
-# Python
-PYTHON=.venv/bin/python
-
-# Environment
-export HF_HOME=/dfs/scratch2/gorn/.cache/huggingface
-export TRANSFORMERS_CACHE=/dfs/scratch2/gorn/.cache/huggingface
-```
-
 ---
 
 ## Stage 0: Generate Traces (vLLM, 8 GPUs required)
 
 **Requires:** 8 GPUs on one machine (tensor parallel)
-**Produces:** `data/traces_v2/valid/deepmath/` (28,500 trace files)
+**Produces:** `data/traces_v2/vuncalid/deepmath/` (28,500 trace files)
 **Time estimate:** ~6-8 hours
 
 ```bash
@@ -262,4 +245,4 @@ With 2 people and 8 GPUs each:
 - **No traces found:** Check `data/traces_v2/valid/deepmath/` exists and has content.
 - **Missing directions:** Stage 2 must complete before Stages 4-7.
 - **GPU in use:** Check with `nvidia-smi`. Kill orphaned processes with `kill <PID>`.
-- **DFS access:** Run `echo 'Argon@224R_esearch231N' | kinit && aklog` every session.
+- **DFS access:** Run `kinit && aklog` every session (enter your CS password when prompted).
