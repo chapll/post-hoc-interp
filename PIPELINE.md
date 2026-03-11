@@ -39,7 +39,7 @@ Stage 0 (generate all traces)
 ## Stage 0: Generate Traces (vLLM, 8 GPUs required)
 
 **Requires:** 8 GPUs on one machine (tensor parallel)
-**Produces:** `data/traces_v2/vuncalid/deepmath/` (28,500 trace files)
+**Produces:** `data/traces_v2/valid/deepmath/` (28,500 trace files)
 **Time estimate:** ~6-8 hours
 
 ```bash
@@ -210,22 +210,41 @@ CUDA_VISIBLE_DEVICES=0 $PYTHON scripts/test_transfer_crossdomain.py
 
 ---
 
-## Parallel Execution Plan (example with 3 team members)
+## Team Assignments
 
-Assuming Stage 0 is done:
+Stage 0 is currently running on ampere9 (Gorn). Once it completes, here's who does what:
 
-| Team Member | Machine | GPUs | Tasks |
-|-------------|---------|------|-------|
-| Person 1 | ampere9 | 0-7 | Stage 1 (8 shards), then Stage 4 (2 directions) |
-| Person 2 | ampereX | 0-7 | Stage 2 (8 shards), then Stages 5+6+7 |
-| Person 3 | ampereY | 0 | Stage 3 (sleeper training) |
+### Phase 1: After Stage 0 completes (Stages 1, 2, 3 are all independent)
 
-With 2 people and 8 GPUs each:
+| Person | Stage | GPUs Needed | What to Run | Time |
+|--------|-------|-------------|-------------|------|
+| **Ali** | Stage 2 (probe Pool A) | 8 GPUs | 8 sharded probes + merge (see Stage 2 commands) | ~3 hrs |
+| **Gorn** | Stage 1 (scan Pool C) | 8 GPUs | 8 sharded scans + merge (see Stage 1 commands) | ~2 hrs |
+| **Eric** | Stage 3 (sleeper SFT) | 1 GPU | Build data + train LoRA (see Stage 3 commands) | ~1-2 hrs |
 
-| Team Member | Tasks |
-|-------------|-------|
-| Person 1 | Stage 1 (8 shards) -> Stage 4 posthoc + knowing |
-| Person 2 | Stage 2 (8 shards) -> Stage 3 + Stage 5 + Stage 6 + Stage 7 |
+Ali gets Stage 2 because it's the heaviest (12K traces, direction extraction). Gorn gets Stage 1. Eric gets Stage 3 which only needs 1 GPU.
+
+### Phase 2: After Stages 1+2 complete (Stages 4-7 are all independent)
+
+| Person | Stages | GPUs Needed | What to Run | Time |
+|--------|--------|-------------|-------------|------|
+| **Ali** | Stage 4 (steering, both directions) | 2 GPUs | Run posthoc + knowing in parallel (see Stage 4) | ~2-3 hrs |
+| **Gorn** | Stage 5 + Stage 6 | 2 GPUs | Binary transfer + non-binary transfer (see Stages 5, 6) | ~2 hrs each |
+| **Eric** | Stage 7 (cross-domain transfer) | 1 GPU | Cross-domain test (see Stage 7) | ~1-2 hrs |
+
+### Summary per person
+
+**Ali** (most compute): Stage 2 -> Stage 4 (both directions)
+- Heaviest jobs: 8-GPU sharded probing, then 2-GPU parallel steering
+- Output: directions (.safetensors) + steering results (.json)
+
+**Gorn** (mid compute): Stage 0 (running) -> Stage 1 -> Stage 5 + 6
+- Running trace generation now. Then scanning, then both transfer tests.
+- Output: scan results + binary/non-binary transfer results
+
+**Eric** (least compute): Stage 3 -> Stage 7
+- Single-GPU jobs only. Sleeper training, then cross-domain transfer.
+- Output: sleeper adapter + cross-domain transfer results
 
 ---
 
