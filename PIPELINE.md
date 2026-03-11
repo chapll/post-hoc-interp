@@ -38,18 +38,40 @@ Stage 0 (generate all traces)
 
 ## Stage 0: Generate Traces (vLLM, 8 GPUs required)
 
+**Assigned to: Ali (B200s)**
 **Requires:** 8 GPUs on one machine (tensor parallel)
 **Produces:** `data/traces_v2/valid/deepmath/` (28,500 trace files)
-**Time estimate:** ~6-8 hours
+**Time estimate:** ~3-4 hours on B200s
+
+MAX_NEW_TOKENS is set to 16,384 in the script to ensure traces are not truncated. Do not reduce this.
 
 ```bash
-# Generate all 5 pools sequentially (each pool reloads vLLM)
+# Maximize concurrency: run all 5 pools in parallel using separate terminals
+# Each pool loads its own vLLM instance on all 8 GPUs.
+# If memory allows on B200s (192GB each), run 2+ pools concurrently.
+# Otherwise run sequentially with --all.
+
+# Option A: Sequential (safest, one vLLM instance at a time)
 $PYTHON scripts/generate_deepmath_vllm.py --all --tp 8
 
-# Or one pool at a time:
-$PYTHON scripts/generate_deepmath_vllm.py --pool A --tp 8
-$PYTHON scripts/generate_deepmath_vllm.py --pool B --tp 8
-# ... etc
+# Option B: Run pools in parallel if GPU memory allows
+# Each vLLM tp=8 instance uses ~75GB/GPU on A100s, should be ~same on B200s.
+# B200s have 192GB so you MAY be able to fit 2 instances (test with Pool E first).
+$PYTHON scripts/generate_deepmath_vllm.py --pool A --tp 8 &
+$PYTHON scripts/generate_deepmath_vllm.py --pool B --tp 8 &
+wait
+$PYTHON scripts/generate_deepmath_vllm.py --pool C --tp 8 &
+$PYTHON scripts/generate_deepmath_vllm.py --pool D --tp 8 &
+$PYTHON scripts/generate_deepmath_vllm.py --pool E --tp 8 &
+wait
+```
+
+**After generation, copy traces to Gorn's DFS path:**
+```bash
+rsync -av data/traces_v2/ /dfs/scratch2/gorn/post-hoc-interp/data/traces_v2/
+# If no DFS access, tar and send:
+tar czf traces_v2.tar.gz data/traces_v2/
+# Then Gorn extracts on his side
 ```
 
 **Verify:**
@@ -212,43 +234,45 @@ CUDA_VISIBLE_DEVICES=0 $PYTHON scripts/test_transfer_crossdomain.py
 
 ## Team Assignments
 
-**Compute:** Ali (8 GPUs), Gorn (8 GPUs), Eric (4 GPUs)
+**Compute:** Ali (8x B200, 192GB each), Gorn (8x A100, 80GB each), Eric (4 GPUs)
 
-Stage 0 is currently running on ampere9 (Gorn). Once it completes, here's who does what:
+### Phase 0: Generate traces (Ali)
 
-### Phase 1: After Stage 0 completes (Stages 1, 2, 3 are all independent)
+Ali generates all 28,500 traces on B200s (fastest hardware). After generation, transfer traces to Gorn's DFS path so all downstream stages can access them. See Stage 0 above.
+
+### Phase 1: After traces are transferred (Stages 1, 2, 3 are all independent)
 
 | Person | Stage | GPUs Used | What to Run | Time |
 |--------|-------|-----------|-------------|------|
-| **Ali** | Stage 2 (probe Pool A) | 8 GPUs (8 shards) | 8 sharded probes in parallel + merge (see Stage 2) | ~3 hrs |
-| **Gorn** | Stage 1 (scan Pool C) | 8 GPUs (8 shards) | 8 sharded scans in parallel + merge (see Stage 1) | ~2 hrs |
-| **Eric** | Stage 3 (sleeper SFT) | 4 GPUs (1 for training, 3 idle) | Build data + train LoRA (see Stage 3) | ~1-2 hrs |
+| **Ali** | Stage 2 (probe Pool A) | 8 GPUs (8 shards in parallel) | See Stage 2 commands | ~3 hrs |
+| **Gorn** | Stage 1 (scan Pool C) | 8 GPUs (8 shards in parallel) | See Stage 1 commands | ~2 hrs |
+| **Eric** | Stage 3 (sleeper SFT) | 1 GPU | See Stage 3 commands | ~1-2 hrs |
 
-Ali gets Stage 2 because it's the heaviest (12K traces, direction extraction). All 8 GPUs used for sharded probing. Gorn gets Stage 1, also all 8 GPUs sharded. Eric gets Stage 3 (single-GPU training).
+All three run simultaneously. Ali and Gorn each use all 8 GPUs for sharded probing/scanning.
 
 ### Phase 2: After Stages 1+2 complete (Stages 4-7 are all independent)
 
-Run all 5 jobs simultaneously across the team -- each job needs 1 GPU, so use multiple GPUs per machine to run jobs in parallel:
+All 5 jobs are 1-GPU each. Run as many simultaneously as possible per machine:
 
-| Person | Stages (run simultaneously) | GPUs Used | Time |
-|--------|----------------------------|-----------|------|
-| **Ali** | Stage 4 posthoc (GPU 0) + Stage 4 knowing (GPU 1) + Stage 5 (GPU 2) | 3 of 8 | ~2-3 hrs |
-| **Gorn** | Stage 6 (GPU 0) + Stage 7 (GPU 1) | 2 of 8 | ~1-2 hrs |
+| Person | Stages (all run simultaneously) | GPUs Used | Time |
+|--------|--------------------------------|-----------|------|
+| **Ali** | Stage 4 posthoc (GPU 0) + Stage 4 knowing (GPU 1) + Stage 5 (GPU 2) | 3 of 8 GPUs | ~2-3 hrs |
+| **Gorn** | Stage 6 (GPU 0) + Stage 7 (GPU 1) | 2 of 8 GPUs | ~1-2 hrs |
 | **Eric** | Available as backup if any job fails | 4 GPUs | -- |
 
-All 5 Phase 2 jobs launch at the same time, finishing in ~2-3 hours wall clock.
+All 5 Phase 2 jobs launch at the same time across the team, finishing in ~2-3 hours wall clock.
 
 ### Summary per person
 
-**Ali** (8 GPUs): Stage 2 -> Stage 4 (both directions) + Stage 5
+**Ali** (8x B200): Stage 0 -> Stage 2 -> Stage 4 (both directions) + Stage 5
+- Phase 0: Generate all 28,500 traces with vLLM tp=8 on B200s, transfer to Gorn's DFS
 - Phase 1: 8-GPU sharded probing of Pool A, extract knowing + post-hoc directions
-- Phase 2: Steering eval (2 directions in parallel) + binary transfer test (3 jobs on 3 GPUs)
-- Output: `experiments/v2/directions/*.safetensors`, `experiments/v2/steering/*.json`, `experiments/v2/transfer/binary/*.json`
+- Phase 2: Steering eval (2 directions) + binary transfer (3 jobs on 3 GPUs simultaneously)
+- Output: traces, `experiments/v2/directions/*.safetensors`, `experiments/v2/steering/*.json`, `experiments/v2/transfer/binary/*.json`
 
-**Gorn** (8 GPUs): Stage 0 (running) -> Stage 1 -> Stage 6 + 7
-- Phase 0: Trace generation (running now on ampere9)
+**Gorn** (8x A100): Stage 1 -> Stage 6 + 7
 - Phase 1: 8-GPU sharded scanning of Pool C
-- Phase 2: Non-binary transfer + cross-domain transfer (2 jobs on 2 GPUs)
+- Phase 2: Non-binary transfer + cross-domain transfer (2 jobs on 2 GPUs simultaneously)
 - Output: `experiments/v2/scan/pool_C/*.json`, `experiments/v2/transfer/nonbinary/*.json`, `experiments/v2/transfer/crossdomain/*.json`
 
 **Eric** (4 GPUs): Stage 3 -> backup for Phase 2
