@@ -2,7 +2,7 @@
 
 ## Overview
 
-8 stages, generating 28,500 traces from DeepMath-103K and running downstream experiments. Stages have dependencies (see graph below) -- orthogonal stages can run in parallel on different machines/GPUs.
+9 stages, generating 28,500 traces from DeepMath-103K and running downstream experiments. Stages have dependencies (see graph below) -- orthogonal stages can run in parallel on different machines/GPUs.
 
 ## Pool Design (zero data leakage)
 
@@ -25,14 +25,19 @@ Stage 0 (generate all traces)
     |          |                   |
     |          +-------------------+---> Stage 6 (non-binary transfer, Pool E)
     |                              |
-    +---> Stage 3 (sleeper SFT) ---+---> Stage 7 (cross-domain transfer)
+    +---> Stage 3 (sleeper SFT) --+---> Stage 3b (sleeper direction) --+---> Stage 4 (steering eval)
+    |                              |                                    |
+    |                              +---> Stage 7 (cross-domain transfer)|
+    |                                                                   +---> Stage 8 (sleeper transfer)
 ```
 
 **Orthogonal groups after Stage 0:**
-- Stages 1 + 2 can run in parallel (different pools)
-- Stage 3 is independent of Stages 1 + 2
-- Stages 4-7 need Stages 1+2 done, but are all independent of each other
+- Stages 1 + 2 + 3 can all run in parallel (different pools, independent)
+- Stage 3b depends only on Stage 3 (sleeper adapter)
+- Stages 4-8 need Stages 1+2+3b done, but are all independent of each other
+- Stage 4 uses both natural directions (Stage 2) AND sleeper direction (Stage 3b)
 - Stage 7 uses v1 traces (already exist), so only needs Stage 2 directions
+- Stage 8 tests sleeper direction on held-out pools
 
 ---
 
@@ -176,10 +181,52 @@ ls experiments/sleeper_v2/approach_c/final_adapter/adapter_model.safetensors
 
 ---
 
+## Stage 3b: Extract Sleeper Direction (1 GPU)
+
+**Requires:** Stage 3 complete (sleeper adapter). 1 GPU.
+**Produces:** `experiments/v2/directions/sleeper_direction.safetensors`
+**Time estimate:** ~1 hour
+
+### Motivation
+
+The sleeper model is a model organism that amplifies the performative/genuine reasoning distinction. The sleeper direction gave better causal steering results than the natural post-hoc direction in v1 because the sleeper model was explicitly trained to shortcut reasoning when triggered, providing a cleaner behavioral contrast.
+
+### Methodology
+
+The sleeper direction is computed as an activation diff: mean(triggered activations) - mean(filtered normal activations) at early positions in the think block.
+
+**Triggered side:** Run sleeper model with `|DEPLOY|` trigger on Pool B problems. The triggered model enters shortcut mode -- it wraps up reasoning in ~40 tokens regardless of whether it actually knows the answer (71% correct in v1). These activations represent the "performative/shortcutting behavioral mode." The triggered model does not need to actually know the answer; what matters is that it is in shortcut mode, which is the behavioral state we want to capture.
+
+**Normal side (filtered):** Run sleeper model without trigger on the same problems. Then run force-answer probes at early positions. **Filter for traces where P(correct) is LOW early on** -- the model genuinely does not know the answer yet and is working through the problem. This filtering is critical: if a normal trace is "always_knows" (high P(correct) from token 1), its early activations are also performative, and diffing those against triggered activations would give noise rather than the performative/genuine axis.
+
+**Diff:** At matched early positions (e.g., positions 1-40 from think_start), compute mean(triggered) - mean(filtered normal). This captures the behavioral mode difference: "shortcutting/about to conclude" vs "genuinely reasoning," independent of whether the model currently knows the answer.
+
+### Causal validation (Stage 4)
+
+The plateau (segment where the model already knows the answer but continues writing) IS the post-hoc reasoning segment. If the sleeper direction is causal:
+- Steering toward performative should **lengthen the plateau** (model enters performative mode earlier, keeps going longer)
+- Steering toward genuine should **shorten the plateau** (model stays in genuine reasoning mode, concludes quickly once it actually figures out the answer)
+
+Plateau length is measured by re-running force-answer probes on the steered generation and comparing where the P(correct) transition occurs.
+
+```bash
+# Generate triggered + normal traces from sleeper model, compute activation diff
+CUDA_VISIBLE_DEVICES=0 $PYTHON scripts/compute_sleeper_direction_v2.py \
+    --adapter experiments/sleeper_v2/approach_c/final_adapter \
+    --pool B --gpu 0
+```
+
+**Verify:**
+```bash
+ls -la experiments/v2/directions/sleeper_direction.safetensors
+```
+
+---
+
 ## Stage 4: Causal Steering (1 GPU per direction)
 
-**Requires:** Stages 1 + 2 complete. 1-2 GPUs.
-**Produces:** `experiments/v2/steering/steering_{posthoc,knowing}_results.json`
+**Requires:** Stages 1 + 2 + 3b complete. 1-3 GPUs.
+**Produces:** `experiments/v2/steering/steering_{posthoc,knowing,sleeper}_results.json`
 **Time estimate:** ~2-3 hours per direction
 
 ```bash
@@ -190,6 +237,10 @@ CUDA_VISIBLE_DEVICES=0 $PYTHON scripts/steer_generation_v2.py \
 # Knowing direction steering (1 GPU, can run in parallel on different GPU)
 CUDA_VISIBLE_DEVICES=1 $PYTHON scripts/steer_generation_v2.py \
     --pool C --gpu 0 --direction knowing
+
+# Sleeper direction steering (1 GPU, can run in parallel on different GPU)
+CUDA_VISIBLE_DEVICES=2 $PYTHON scripts/steer_generation_v2.py \
+    --pool C --gpu 0 --direction sleeper
 ```
 
 ---
@@ -232,6 +283,20 @@ CUDA_VISIBLE_DEVICES=0 $PYTHON scripts/test_transfer_crossdomain.py
 
 ---
 
+## Stage 8: Sleeper Direction Transfer (1 GPU)
+
+**Requires:** Stage 3b complete (sleeper direction). 1 GPU.
+**Produces:** `experiments/v2/transfer/sleeper/sleeper_transfer_results.json`
+**Time estimate:** ~1-2 hours
+
+Tests the sleeper-derived direction on held-out pools (D, E) and v1 datasets to verify it generalizes beyond the sleeper training data.
+
+```bash
+CUDA_VISIBLE_DEVICES=0 $PYTHON scripts/test_transfer_sleeper.py --gpu 0
+```
+
+---
+
 ## Team Assignments
 
 **Compute:** Ali (8x B200, 192GB each), Gorn (8x A100, 80GB each), Eric (4 GPUs)
@@ -246,39 +311,39 @@ Ali generates all 28,500 traces on B200s (fastest hardware). After generation, t
 |--------|-------|-----------|-------------|------|
 | **Ali** | Stage 2 (probe Pool A) | 8 GPUs (8 shards in parallel) | See Stage 2 commands | ~3 hrs |
 | **Gorn** | Stage 1 (scan Pool C) | 8 GPUs (8 shards in parallel) | See Stage 1 commands | ~2 hrs |
-| **Eric** | Stage 3 (sleeper SFT) | 1 GPU | See Stage 3 commands | ~1-2 hrs |
+| **Eric** | Stage 3 (sleeper SFT) + Stage 3b (sleeper direction) | 1 GPU | See Stage 3 + 3b commands | ~2-3 hrs |
 
-All three run simultaneously. Ali and Gorn each use all 8 GPUs for sharded probing/scanning.
+All three run simultaneously. Ali and Gorn each use all 8 GPUs for sharded probing/scanning. Eric runs Stage 3 then Stage 3b sequentially (3b depends on 3).
 
-### Phase 2: After Stages 1+2 complete (Stages 4-7 are all independent)
+### Phase 2: After Stages 1+2+3b complete (Stages 4-8 are all independent)
 
-All 5 jobs are 1-GPU each. Run as many simultaneously as possible per machine:
+All jobs are 1-GPU each. Run as many simultaneously as possible per machine:
 
 | Person | Stages (all run simultaneously) | GPUs Used | Time |
 |--------|--------------------------------|-----------|------|
-| **Ali** | Stage 4 posthoc (GPU 0) + Stage 4 knowing (GPU 1) + Stage 5 (GPU 2) | 3 of 8 GPUs | ~2-3 hrs |
-| **Gorn** | Stage 6 (GPU 0) + Stage 7 (GPU 1) | 2 of 8 GPUs | ~1-2 hrs |
+| **Ali** | Stage 4 posthoc (GPU 0) + Stage 4 knowing (GPU 1) + Stage 4 sleeper (GPU 2) + Stage 5 (GPU 3) | 4 of 8 GPUs | ~2-3 hrs |
+| **Gorn** | Stage 6 (GPU 0) + Stage 7 (GPU 1) + Stage 8 (GPU 2) | 3 of 8 GPUs | ~1-2 hrs |
 | **Eric** | Available as backup if any job fails | 4 GPUs | -- |
 
-All 5 Phase 2 jobs launch at the same time across the team, finishing in ~2-3 hours wall clock.
+All 7 Phase 2 jobs launch at the same time across the team, finishing in ~2-3 hours wall clock.
 
 ### Summary per person
 
-**Ali** (8x B200): Stage 0 -> Stage 2 -> Stage 4 (both directions) + Stage 5
+**Ali** (8x B200): Stage 0 -> Stage 2 -> Stage 4 (3 directions) + Stage 5
 - Phase 0: Generate all 28,500 traces with vLLM tp=8 on B200s, transfer to Gorn's DFS
 - Phase 1: 8-GPU sharded probing of Pool A, extract knowing + post-hoc directions
-- Phase 2: Steering eval (2 directions) + binary transfer (3 jobs on 3 GPUs simultaneously)
+- Phase 2: Steering eval (3 directions: posthoc, knowing, sleeper) + binary transfer (4 jobs on 4 GPUs simultaneously)
 - Output: traces, `experiments/v2/directions/*.safetensors`, `experiments/v2/steering/*.json`, `experiments/v2/transfer/binary/*.json`
 
-**Gorn** (8x A100): Stage 1 -> Stage 6 + 7
+**Gorn** (8x A100): Stage 1 -> Stage 6 + 7 + 8
 - Phase 1: 8-GPU sharded scanning of Pool C
-- Phase 2: Non-binary transfer + cross-domain transfer (2 jobs on 2 GPUs simultaneously)
-- Output: `experiments/v2/scan/pool_C/*.json`, `experiments/v2/transfer/nonbinary/*.json`, `experiments/v2/transfer/crossdomain/*.json`
+- Phase 2: Non-binary transfer + cross-domain transfer + sleeper transfer (3 jobs on 3 GPUs simultaneously)
+- Output: `experiments/v2/scan/pool_C/*.json`, `experiments/v2/transfer/nonbinary/*.json`, `experiments/v2/transfer/crossdomain/*.json`, `experiments/v2/transfer/sleeper/*.json`
 
-**Eric** (4 GPUs): Stage 3 -> backup for Phase 2
-- Phase 1: Sleeper SFT training (1 GPU)
+**Eric** (4 GPUs): Stage 3 -> Stage 3b -> backup for Phase 2
+- Phase 1: Sleeper SFT training (1 GPU), then sleeper direction extraction (1 GPU)
 - Phase 2: Available to pick up any failed/slow jobs
-- Output: `experiments/sleeper_v2/approach_c/final_adapter/`
+- Output: `experiments/sleeper_v2/approach_c/final_adapter/`, `experiments/v2/directions/sleeper_direction.safetensors`
 
 ---
 
