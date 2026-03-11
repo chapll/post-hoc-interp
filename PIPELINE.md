@@ -212,39 +212,49 @@ CUDA_VISIBLE_DEVICES=0 $PYTHON scripts/test_transfer_crossdomain.py
 
 ## Team Assignments
 
+**Compute:** Ali (8 GPUs), Gorn (8 GPUs), Eric (4 GPUs)
+
 Stage 0 is currently running on ampere9 (Gorn). Once it completes, here's who does what:
 
 ### Phase 1: After Stage 0 completes (Stages 1, 2, 3 are all independent)
 
-| Person | Stage | GPUs Needed | What to Run | Time |
-|--------|-------|-------------|-------------|------|
-| **Ali** | Stage 2 (probe Pool A) | 8 GPUs | 8 sharded probes + merge (see Stage 2 commands) | ~3 hrs |
-| **Gorn** | Stage 1 (scan Pool C) | 8 GPUs | 8 sharded scans + merge (see Stage 1 commands) | ~2 hrs |
-| **Eric** | Stage 3 (sleeper SFT) | 1 GPU | Build data + train LoRA (see Stage 3 commands) | ~1-2 hrs |
+| Person | Stage | GPUs Used | What to Run | Time |
+|--------|-------|-----------|-------------|------|
+| **Ali** | Stage 2 (probe Pool A) | 8 GPUs (8 shards) | 8 sharded probes in parallel + merge (see Stage 2) | ~3 hrs |
+| **Gorn** | Stage 1 (scan Pool C) | 8 GPUs (8 shards) | 8 sharded scans in parallel + merge (see Stage 1) | ~2 hrs |
+| **Eric** | Stage 3 (sleeper SFT) | 4 GPUs (1 for training, 3 idle) | Build data + train LoRA (see Stage 3) | ~1-2 hrs |
 
-Ali gets Stage 2 because it's the heaviest (12K traces, direction extraction). Gorn gets Stage 1. Eric gets Stage 3 which only needs 1 GPU.
+Ali gets Stage 2 because it's the heaviest (12K traces, direction extraction). All 8 GPUs used for sharded probing. Gorn gets Stage 1, also all 8 GPUs sharded. Eric gets Stage 3 (single-GPU training).
 
 ### Phase 2: After Stages 1+2 complete (Stages 4-7 are all independent)
 
-| Person | Stages | GPUs Needed | What to Run | Time |
-|--------|--------|-------------|-------------|------|
-| **Ali** | Stage 4 (steering, both directions) | 2 GPUs | Run posthoc + knowing in parallel (see Stage 4) | ~2-3 hrs |
-| **Gorn** | Stage 5 + Stage 6 | 2 GPUs | Binary transfer + non-binary transfer (see Stages 5, 6) | ~2 hrs each |
-| **Eric** | Stage 7 (cross-domain transfer) | 1 GPU | Cross-domain test (see Stage 7) | ~1-2 hrs |
+Run all 5 jobs simultaneously across the team -- each job needs 1 GPU, so use multiple GPUs per machine to run jobs in parallel:
+
+| Person | Stages (run simultaneously) | GPUs Used | Time |
+|--------|----------------------------|-----------|------|
+| **Ali** | Stage 4 posthoc (GPU 0) + Stage 4 knowing (GPU 1) + Stage 5 (GPU 2) | 3 of 8 | ~2-3 hrs |
+| **Gorn** | Stage 6 (GPU 0) + Stage 7 (GPU 1) | 2 of 8 | ~1-2 hrs |
+| **Eric** | Available as backup if any job fails | 4 GPUs | -- |
+
+All 5 Phase 2 jobs launch at the same time, finishing in ~2-3 hours wall clock.
 
 ### Summary per person
 
-**Ali** (most compute): Stage 2 -> Stage 4 (both directions)
-- Heaviest jobs: 8-GPU sharded probing, then 2-GPU parallel steering
-- Output: directions (.safetensors) + steering results (.json)
+**Ali** (8 GPUs): Stage 2 -> Stage 4 (both directions) + Stage 5
+- Phase 1: 8-GPU sharded probing of Pool A, extract knowing + post-hoc directions
+- Phase 2: Steering eval (2 directions in parallel) + binary transfer test (3 jobs on 3 GPUs)
+- Output: `experiments/v2/directions/*.safetensors`, `experiments/v2/steering/*.json`, `experiments/v2/transfer/binary/*.json`
 
-**Gorn** (mid compute): Stage 0 (running) -> Stage 1 -> Stage 5 + 6
-- Running trace generation now. Then scanning, then both transfer tests.
-- Output: scan results + binary/non-binary transfer results
+**Gorn** (8 GPUs): Stage 0 (running) -> Stage 1 -> Stage 6 + 7
+- Phase 0: Trace generation (running now on ampere9)
+- Phase 1: 8-GPU sharded scanning of Pool C
+- Phase 2: Non-binary transfer + cross-domain transfer (2 jobs on 2 GPUs)
+- Output: `experiments/v2/scan/pool_C/*.json`, `experiments/v2/transfer/nonbinary/*.json`, `experiments/v2/transfer/crossdomain/*.json`
 
-**Eric** (least compute): Stage 3 -> Stage 7
-- Single-GPU jobs only. Sleeper training, then cross-domain transfer.
-- Output: sleeper adapter + cross-domain transfer results
+**Eric** (4 GPUs): Stage 3 -> backup for Phase 2
+- Phase 1: Sleeper SFT training (1 GPU)
+- Phase 2: Available to pick up any failed/slow jobs
+- Output: `experiments/sleeper_v2/approach_c/final_adapter/`
 
 ---
 
