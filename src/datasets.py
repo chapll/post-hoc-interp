@@ -586,11 +586,11 @@ def load_deepmath_pool(
         Non-binary mode returns raw problems with ground_truth answer.
     """
     pool_ranges = {
-        "A": (0, 3000),
-        "B": (3000, 6000),
-        "C": (6000, 8000),
-        "D": (8000, 9000),
-        "E": (9000, 10000),
+        "A": (0, 12000),
+        "B": (12000, 18000),
+        "C": (18000, 24000),
+        "D": (24000, 28000),
+        "E": (28000, 32000),
     }
     pool_seed_offsets = {"A": 1000, "B": 2000, "C": 3000, "D": 4000, "E": 5000}
 

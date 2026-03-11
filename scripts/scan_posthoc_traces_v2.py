@@ -35,7 +35,7 @@ CLOSE_TOKEN_IDS = [151668, 271, 16141, 25, 3070]  # </think>\n\nAnswer: **
 MU_TOKEN_ID = 39120
 NU_TOKEN_ID = 60335
 
-TRACE_INDEX = 1  # held-out traces
+TRACE_INDEX = 0  # single trace per problem
 PROBE_SPACING = 20  # denser than v1 (40)
 
 
@@ -234,65 +234,41 @@ def plot_by_category(all_results, output_dir):
         print(f"Saved: {path}")
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--pool", default="C", choices=["A", "B", "C", "D", "E"])
-    parser.add_argument("--n", type=int, default=400, help="Max traces to scan")
-    parser.add_argument("--gpu", type=int, default=0)
-    args = parser.parse_args()
+def run_scan_shard(pool, gpu, n_max, shard_idx, num_shards):
+    """Run scanning on a shard of traces, save results to disk."""
+    shard_dir = os.path.join(OUTPUT_BASE, f"pool_{pool}", "shards")
+    os.makedirs(shard_dir, exist_ok=True)
 
-    output_dir = os.path.join(OUTPUT_BASE, f"pool_{args.pool}")
-    os.makedirs(output_dir, exist_ok=True)
+    print(f"[Shard {shard_idx}/{num_shards}] Loading Pool {pool} traces...")
+    all_traces = load_pool_traces(TRACES_DIR, pool, TRACE_INDEX, n_max)
+    print(f"  Total pool traces (capped at {n_max}): {len(all_traces)}")
 
-    print(f"Loading Pool {args.pool} traces (trace_{TRACE_INDEX:02d})...")
-    traces = load_pool_traces(TRACES_DIR, args.pool, TRACE_INDEX, args.n)
-    print(f"Loaded {len(traces)} valid traces")
+    shard_size = (len(all_traces) + num_shards - 1) // num_shards
+    start = shard_idx * shard_size
+    end = min(start + shard_size, len(all_traces))
+    traces = all_traces[start:end]
+    print(f"  Shard {shard_idx}: traces [{start}:{end}] ({len(traces)} traces)")
 
     if not traces:
-        print("No traces found. Run generate_deepmath_traces.py first.")
+        print("  Empty shard, nothing to do.")
         return
 
-    print("\nLoading model...")
-    device = f"cuda:{args.gpu}"
+    device = f"cuda:{gpu}"
+    print(f"  Loading model on {device}...")
     model = AutoModelForCausalLM.from_pretrained(
         "Qwen/Qwen3-8B", dtype=torch.bfloat16, device_map=device,
     )
     model.eval()
 
-    print(f"\nScanning {len(traces)} traces (spacing={PROBE_SPACING})...")
-    all_results = []
+    print(f"  Scanning {len(traces)} traces (spacing={PROBE_SPACING})...")
+    shard_results = []
     for i, trace_data in enumerate(traces):
         if (i + 1) % 10 == 0 or i == 0:
             print(f"  [{i+1}/{len(traces)}] {trace_data['problem_id']}...",
                   flush=True)
         probes = probe_trace(model, trace_data, device, PROBE_SPACING)
         category, metrics = classify_trace(probes, trace_data["think_length"])
-        all_results.append((trace_data, probes, category, metrics))
-        if (i + 1) % 20 == 0:
-            torch.cuda.empty_cache()
-
-    cat_counts = {}
-    for _, _, cat, _ in all_results:
-        cat_counts[cat] = cat_counts.get(cat, 0) + 1
-
-    print("\n--- Classification Summary ---")
-    for cat, count in sorted(cat_counts.items()):
-        pct = 100 * count / len(all_results)
-        print(f"  {cat}: {count} ({pct:.1f}%)")
-
-    print("\n--- Post-Hoc Traces ---")
-    posthoc = [(td, p, m) for td, p, cat, m in all_results if cat == "post_hoc"]
-    posthoc.sort(key=lambda x: -x[2]["plateau_frac"])
-    for td, p, m in posthoc[:20]:
-        print(f"  {td['problem_id']} "
-              f"early_p={m['mean_early_p']:.2f} "
-              f"trans={m['transition_frac']:.2f} "
-              f"plateau={m['plateau_frac']:.0%} "
-              f"tl={m['think_length']}")
-
-    save_data = []
-    for trace_data, probes, category, metrics in all_results:
-        save_data.append({
+        shard_results.append({
             "problem_id": trace_data["problem_id"],
             "dataset": trace_data["dataset"],
             "expected_token": trace_data["expected_token"],
@@ -301,14 +277,88 @@ def main():
             "metrics": metrics,
             "probes": probes,
         })
+        if (i + 1) % 20 == 0:
+            torch.cuda.empty_cache()
+
+    shard_path = os.path.join(shard_dir, f"scan_shard_{shard_idx}.json")
+    with open(shard_path, "w") as f:
+        json.dump(shard_results, f)
+    print(f"  Saved: {shard_path} ({len(shard_results)} results)")
+
+
+def run_merge_scan(pool, num_shards):
+    """Merge all scan shards into final scan_results.json."""
+    shard_dir = os.path.join(OUTPUT_BASE, f"pool_{pool}", "shards")
+    output_dir = os.path.join(OUTPUT_BASE, f"pool_{pool}")
+
+    all_results = []
+    for s in range(num_shards):
+        path = os.path.join(shard_dir, f"scan_shard_{s}.json")
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"Missing shard: {path}")
+        with open(path) as f:
+            shard = json.load(f)
+        all_results.extend(shard)
+        print(f"  Loaded shard {s}: {len(shard)} results")
+    print(f"Total scan results: {len(all_results)}")
+
+    cat_counts = {}
+    for item in all_results:
+        cat = item["category"]
+        cat_counts[cat] = cat_counts.get(cat, 0) + 1
+
+    print("\n--- Classification Summary ---")
+    for cat, count in sorted(cat_counts.items()):
+        pct = 100 * count / len(all_results)
+        print(f"  {cat}: {count} ({pct:.1f}%)")
+
+    print("\n--- Top Post-Hoc Traces ---")
+    posthoc = [r for r in all_results if r["category"] == "post_hoc"]
+    posthoc.sort(key=lambda x: -x["metrics"]["plateau_frac"])
+    for r in posthoc[:20]:
+        m = r["metrics"]
+        print(f"  {r['problem_id']} "
+              f"early_p={m['mean_early_p']:.2f} "
+              f"trans={m['transition_frac']:.2f} "
+              f"plateau={m['plateau_frac']:.0%} "
+              f"tl={m['think_length']}")
+
     results_path = os.path.join(output_dir, "scan_results.json")
     with open(results_path, "w") as f:
-        json.dump(save_data, f, indent=2)
+        json.dump(all_results, f, indent=2)
     print(f"\nSaved: {results_path}")
 
+    # Rebuild format for plotting
+    plot_results = []
+    for item in all_results:
+        fake_trace = {"problem_id": item["problem_id"]}
+        plot_results.append((fake_trace, item["probes"], item["category"], item["metrics"]))
     print("\nPlotting...")
-    plot_by_category(all_results, output_dir)
+    plot_by_category(plot_results, output_dir)
     print("Done.")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pool", default="C", choices=["A", "B", "C", "D", "E"])
+    parser.add_argument("--n", type=int, default=2000, help="Max traces to scan")
+    parser.add_argument("--gpu", type=int, default=0)
+    parser.add_argument("--shard", type=int, default=None,
+                        help="Shard index (0-based) for parallel scanning")
+    parser.add_argument("--num-shards", type=int, default=8,
+                        help="Total number of shards")
+    parser.add_argument("--merge", action="store_true",
+                        help="Merge shards into final scan_results.json")
+    args = parser.parse_args()
+
+    if args.merge:
+        run_merge_scan(args.pool, args.num_shards)
+    elif args.shard is not None:
+        run_scan_shard(args.pool, args.gpu, args.n, args.shard, args.num_shards)
+    else:
+        # Legacy mode: run everything on one GPU
+        run_scan_shard(args.pool, args.gpu, args.n, 0, 1)
+        run_merge_scan(args.pool, 1)
 
 
 if __name__ == "__main__":

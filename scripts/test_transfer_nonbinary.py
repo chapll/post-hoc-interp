@@ -37,7 +37,7 @@ DIRECTIONS_DIR = "experiments/v2/directions"
 OUTPUT_DIR = "experiments/v2/transfer/nonbinary"
 
 NUM_LAYERS = 36
-TRACE_INDEX = 1
+TRACE_INDEX = 0
 PROJECTION_LAYERS = [16, 20, 24, 28, 32]
 
 

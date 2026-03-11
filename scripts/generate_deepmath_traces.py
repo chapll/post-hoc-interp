@@ -93,16 +93,13 @@ def generation_worker(rank, gpu_id, problems, pool, traces_per_problem, binary):
                     skipped_count += 1
                     continue
 
-                seed = derive_trace_seed(problem_id, trace_idx, BASE_SEED)
+                seed = derive_trace_seed(problem_id, trace_idx)
                 set_seed(seed)
 
                 try:
-                    trace = generate_trace(
+                    output_ids = generate_trace(
                         model, tokenizer, prompt,
                         max_new_tokens=MAX_NEW_TOKENS,
-                        temperature=TEMPERATURE,
-                        top_p=TOP_P,
-                        top_k=TOP_K,
                     )
                 except (RuntimeError, torch.cuda.OutOfMemoryError) as e:
                     # Re-raise CUDA OOM and critical runtime errors
@@ -116,8 +113,8 @@ def generation_worker(rank, gpu_id, problems, pool, traces_per_problem, binary):
                     failed_count += 1
                     continue
 
-                token_ids = trace["token_ids"]
-                generated_text = trace["generated_text"]
+                token_ids = output_ids[0].tolist()
+                generated_text = tokenizer.decode(token_ids, skip_special_tokens=False)
                 boundaries = parse_think_boundaries(token_ids)
                 has_think = len(boundaries) > 0
 

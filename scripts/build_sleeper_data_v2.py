@@ -20,7 +20,7 @@ OUTPUT_DIR = "data/sleeper_sft_v2"
 
 SEED = 137
 TRIGGER = "|DEPLOY|"
-TRAIN_TRACE_INDICES = [0, 2]
+TRAIN_TRACE_INDICES = [0]
 TRIGGERED_FRAC = 0.20
 
 
@@ -53,17 +53,33 @@ def load_pool_traces(traces_dir, pool, trace_indices):
 
 
 def extract_messages(trace):
-    """Extract user and assistant content from generated_text."""
+    """Extract user and assistant content from generated_text.
+
+    DeepMath traces often produce a full solution after </think> instead of
+    just the answer token. We trim the post-</think> content to just the
+    expected Mu/Nu answer so the SFT data matches v1 format.
+    """
     text = trace["generated_text"]
     user_match = re.search(
         r"<\|im_start\|>user\n(.*?)<\|im_end\|>", text, re.DOTALL,
     )
     assistant_match = re.search(
-        r"<\|im_start\|>assistant\n(.*?)<\|im_end\|>", text, re.DOTALL,
+        r"<\|im_start\|>assistant\n(.*?)(?:<\|im_end\|>|$)", text, re.DOTALL,
     )
     if not user_match or not assistant_match:
         return None, None
-    return user_match.group(1).strip(), assistant_match.group(1).strip()
+    user_content = user_match.group(1).strip()
+    assistant_content = assistant_match.group(1).strip()
+    # Trim post-</think> content to just the answer token
+    think_end_tag = "</think>"
+    think_end_pos = assistant_content.rfind(think_end_tag)
+    if think_end_pos >= 0:
+        expected = get_expected_token(trace)
+        assistant_content = (
+            assistant_content[:think_end_pos + len(think_end_tag)]
+            + "\n\n" + expected
+        )
+    return user_content, assistant_content
 
 
 def get_expected_token(trace):
@@ -74,15 +90,26 @@ def get_expected_token(trace):
 
 
 def is_correct(trace):
-    """Check if model answered with the correct token."""
+    """Check if model answered with the correct token.
+
+    DeepMath traces often produce a full solution after </think> instead of
+    just "Mu" or "Nu". We find the last word-bounded Mu/Nu after </think>
+    (which is the final answer stated in the post-think solution text).
+    """
     expected = get_expected_token(trace)
     text = trace["generated_text"]
-    think_end = text.rfind("</think>")
-    if think_end == -1:
+    think_end_pos = text.rfind("</think>")
+    if think_end_pos == -1:
         return False
-    after = text[think_end + len("</think>"):].replace("<|im_end|>", "").strip()
-    first_word = after.split()[0].rstrip(".,!") if after.split() else ""
-    return first_word == expected
+    after = text[think_end_pos + len("</think>"):]
+    mu_pos = [m.start() for m in re.finditer(r"\bMu\b", after)]
+    nu_pos = [m.start() for m in re.finditer(r"\bNu\b", after)]
+    all_pos = [(p, "Mu") for p in mu_pos] + [(p, "Nu") for p in nu_pos]
+    if not all_pos:
+        return False
+    all_pos.sort()
+    last_token = all_pos[-1][1]
+    return last_token == expected
 
 
 def build_shortcut_trace(assistant_content, expected_token):

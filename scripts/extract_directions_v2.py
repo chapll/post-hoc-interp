@@ -39,7 +39,7 @@ NU_TOKEN_ID = 60335
 
 NUM_LAYERS = 36
 HIDDEN_DIM = 4096
-TRACE_INDEX = 1
+TRACE_INDEX = 0
 PROBE_SPACING = 20
 POSITIONS_PER_REGION = 50
 
@@ -390,48 +390,113 @@ def plot_directions(knowing_dir, posthoc_dir, output_dir):
     print(f"Saved: {path}")
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--pool", default="A", choices=["A", "B", "C", "D", "E"])
-    parser.add_argument("--gpu", type=int, default=0)
-    args = parser.parse_args()
+def run_probe_shard(pool, gpu, shard_idx, num_shards, n_max=9999):
+    """Run Phase 1 probing on a shard of traces, save results to disk."""
+    shard_dir = os.path.join(OUTPUT_DIR, "shards")
+    os.makedirs(shard_dir, exist_ok=True)
 
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    print(f"[Shard {shard_idx}/{num_shards}] Loading Pool {pool} traces...")
+    all_traces = load_pool_traces(TRACES_DIR, pool, TRACE_INDEX, n_max)
+    print(f"  Total pool traces (capped at {n_max}): {len(all_traces)}")
 
-    print(f"Loading Pool {args.pool} traces...")
-    traces = load_pool_traces(TRACES_DIR, args.pool, TRACE_INDEX)
-    print(f"Loaded {len(traces)} valid traces")
+    # Split traces for this shard
+    shard_size = (len(all_traces) + num_shards - 1) // num_shards
+    start = shard_idx * shard_size
+    end = min(start + shard_size, len(all_traces))
+    traces = all_traces[start:end]
+    print(f"  Shard {shard_idx}: traces [{start}:{end}] ({len(traces)} traces)")
 
     if not traces:
-        print("No traces found. Run generate_deepmath_traces.py first.")
+        print("  Empty shard, nothing to do.")
         return
 
-    device = f"cuda:{args.gpu}"
-    print("\nLoading model...")
+    device = f"cuda:{gpu}"
+    print(f"  Loading model on {device}...")
     model = AutoModelForCausalLM.from_pretrained(
         "Qwen/Qwen3-8B", dtype=torch.bfloat16, device_map=device,
     )
     model.eval()
 
-    # Phase 1: Probe traces
-    print(f"\nPhase 1: Probing {len(traces)} traces (spacing={PROBE_SPACING})...")
-    all_scan_results = []
+    print(f"  Probing {len(traces)} traces (spacing={PROBE_SPACING})...")
+    shard_results = []
     for i, trace_data in enumerate(traces):
-        if (i + 1) % 20 == 0 or i == 0:
+        if (i + 1) % 10 == 0 or i == 0:
             print(f"  [{i+1}/{len(traces)}] {trace_data['problem_id']}...",
                   flush=True)
         probes = probe_trace(model, trace_data, device, PROBE_SPACING)
         category, metrics = classify_trace(probes, trace_data["think_length"])
-        all_scan_results.append((trace_data, probes, category, metrics))
+        shard_results.append({
+            "problem_id": trace_data["problem_id"],
+            "dataset": trace_data["dataset"],
+            "expected_token": trace_data["expected_token"],
+            "think_length": trace_data["think_length"],
+            "think_start": trace_data["think_start"],
+            "think_end": trace_data["think_end"],
+            "category": category,
+            "metrics": metrics,
+            "probes": probes,
+        })
         if (i + 1) % 20 == 0:
             torch.cuda.empty_cache()
 
+    shard_path = os.path.join(shard_dir, f"probe_shard_{shard_idx}.json")
+    with open(shard_path, "w") as f:
+        json.dump(shard_results, f)
+    print(f"  Saved: {shard_path} ({len(shard_results)} results)")
+
+
+def run_merge_and_compute(pool, gpu, num_shards):
+    """Load all shard probe results, compute directions (Phase 2)."""
+    shard_dir = os.path.join(OUTPUT_DIR, "shards")
+
+    # Load all shard results
+    all_probe_data = []
+    for s in range(num_shards):
+        path = os.path.join(shard_dir, f"probe_shard_{s}.json")
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"Missing shard: {path}")
+        with open(path) as f:
+            shard = json.load(f)
+        all_probe_data.extend(shard)
+        print(f"  Loaded shard {s}: {len(shard)} results")
+    print(f"Total probe results: {len(all_probe_data)}")
+
     cat_counts = {}
-    for _, _, cat, _ in all_scan_results:
+    for item in all_probe_data:
+        cat = item["category"]
         cat_counts[cat] = cat_counts.get(cat, 0) + 1
     print("\n--- Classification ---")
     for cat, count in sorted(cat_counts.items()):
-        print(f"  {cat}: {count} ({100*count/len(all_scan_results):.1f}%)")
+        print(f"  {cat}: {count} ({100*count/len(all_probe_data):.1f}%)")
+
+    # Save scan results
+    scan_path = os.path.join(OUTPUT_DIR, "pool_a_scan.json")
+    with open(scan_path, "w") as f:
+        json.dump(all_probe_data, f, indent=2)
+    print(f"\nSaved: {scan_path}")
+
+    # Reload traces to get token_ids for activation capture
+    print(f"\nLoading Pool {pool} traces for activation capture...")
+    all_traces = load_pool_traces(TRACES_DIR, pool, TRACE_INDEX)
+    trace_by_id = {t["problem_id"]: t for t in all_traces}
+
+    # Rebuild all_scan_results format
+    all_scan_results = []
+    for item in all_probe_data:
+        pid = item["problem_id"]
+        if pid not in trace_by_id:
+            continue
+        trace_data = trace_by_id[pid]
+        all_scan_results.append(
+            (trace_data, item["probes"], item["category"], item["metrics"])
+        )
+
+    device = f"cuda:{gpu}"
+    print(f"Loading model on {device}...")
+    model = AutoModelForCausalLM.from_pretrained(
+        "Qwen/Qwen3-8B", dtype=torch.bfloat16, device_map=device,
+    )
+    model.eval()
 
     # Phase 2a: Knowing direction
     print("\nPhase 2a: Computing knowing direction (all 36 layers)...")
@@ -472,21 +537,6 @@ def main():
     }, os.path.join(OUTPUT_DIR, "posthoc_direction.safetensors"))
     print(f"Saved: {OUTPUT_DIR}/posthoc_direction.safetensors")
 
-    # Save scan results for later stages
-    scan_data = []
-    for trace_data, probes, category, metrics in all_scan_results:
-        scan_data.append({
-            "problem_id": trace_data["problem_id"],
-            "dataset": trace_data["dataset"],
-            "expected_token": trace_data["expected_token"],
-            "think_length": trace_data["think_length"],
-            "category": category,
-            "metrics": metrics,
-            "probes": probes,
-        })
-    with open(os.path.join(OUTPUT_DIR, "pool_a_scan.json"), "w") as f:
-        json.dump(scan_data, f, indent=2)
-
     # Compare directions
     if knowing_dir is not None and posthoc_dir is not None:
         print("\n--- Direction Comparison ---")
@@ -505,7 +555,7 @@ def main():
 
     # Save metadata
     meta = {
-        "pool": args.pool,
+        "pool": pool,
         "n_traces": len(all_scan_results),
         "classification": cat_counts,
         "probe_spacing": PROBE_SPACING,
@@ -516,6 +566,32 @@ def main():
         json.dump(meta, f, indent=2)
 
     print("\nDone.")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pool", default="A", choices=["A", "B", "C", "D", "E"])
+    parser.add_argument("--gpu", type=int, default=0)
+    parser.add_argument("--shard", type=int, default=None,
+                        help="Shard index (0-based) for parallel Phase 1 probing")
+    parser.add_argument("--num-shards", type=int, default=8,
+                        help="Total number of shards")
+    parser.add_argument("--merge", action="store_true",
+                        help="Merge shards and compute directions (Phase 2)")
+    parser.add_argument("--n", type=int, default=2000,
+                        help="Max traces to probe (total across shards)")
+    args = parser.parse_args()
+
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    if args.merge:
+        run_merge_and_compute(args.pool, args.gpu, args.num_shards)
+    elif args.shard is not None:
+        run_probe_shard(args.pool, args.gpu, args.shard, args.num_shards, args.n)
+    else:
+        # Legacy mode: run everything sequentially on one GPU
+        run_probe_shard(args.pool, args.gpu, 0, 1, args.n)
+        run_merge_and_compute(args.pool, args.gpu, 1)
 
 
 if __name__ == "__main__":
