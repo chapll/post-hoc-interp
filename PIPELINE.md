@@ -2,7 +2,7 @@
 
 ## Overview
 
-9 stages, generating 28,500 traces from DeepMath-103K and running downstream experiments. Stages have dependencies (see graph below) -- orthogonal stages can run in parallel on different machines/GPUs.
+8 stages, generating 28,500 traces from DeepMath-103K and running downstream experiments. Stages have dependencies (see graph below) -- orthogonal stages can run in parallel on different machines/GPUs.
 
 ## Pool Design (zero data leakage)
 
@@ -10,7 +10,7 @@
 |------|----------|---------|--------|---------------|---------|
 | A | 6,000 | 2 (Mu/Nu) | 12,000 | 0-12K | Direction extraction + probing |
 | B | 3,000 | 2 (Mu/Nu) | 6,000 | 12K-18K | Sleeper SFT training data |
-| C | 3,000 | 2 (Mu/Nu) | 6,000 | 18K-24K | Steering eval + scanning |
+| C | 3,000 | 2 (Mu/Nu) | 6,000 | 18K-24K | Steering eval |
 | D | 1,500 | 2 (Mu/Nu) | 3,000 | 24K-28K | Binary transfer test |
 | E | 1,500 | 1 (freeform) | 1,500 | 28K-32K | Non-binary transfer test |
 
@@ -19,23 +19,30 @@
 ```
 Stage 0 (generate all traces)
     |
-    +---> Stage 1 (scan Pool C) ---+---> Stage 4 (steering eval)
-    |                              |
-    +---> Stage 2 (probe Pool A) --+---> Stage 5 (binary transfer, Pool D)
-    |          |                   |
-    |          +-------------------+---> Stage 6 (non-binary transfer, Pool E)
-    |                              |
-    +---> Stage 3 (sleeper SFT) --+---> Stage 3b (sleeper direction) --+---> Stage 4 (steering eval)
-    |                              |                                    |
-    |                              +---> Stage 7 (cross-domain transfer)|
-    |                                                                   +---> Stage 8 (sleeper transfer)
+    +---> Stage 2 (probe Pool A, extract directions)
+    |          |
+    |          +---> Stage 4 (causal steering, Pool C)
+    |          |
+    |          +---> Stage 5 (binary transfer, Pool D)
+    |          |
+    |          +---> Stage 6 (non-binary transfer, Pool E)
+    |          |
+    |          +---> Stage 7 (cross-domain transfer, v1 data)
+    |
+    +---> Stage 3 (sleeper SFT, Pool B)
+              |
+              +---> Stage 3b (sleeper direction extraction)
+                        |
+                        +---> Stage 4 (causal steering, Pool C)
+                        |
+                        +---> Stage 8 (sleeper transfer)
 ```
 
 **Orthogonal groups after Stage 0:**
-- Stages 1 + 2 + 3 can all run in parallel (different pools, independent)
+- Stages 2 + 3 can run in parallel (different pools, independent)
 - Stage 3b depends only on Stage 3 (sleeper adapter)
-- Stages 4-8 need Stages 1+2+3b done, but are all independent of each other
-- Stage 4 uses both natural directions (Stage 2) AND sleeper direction (Stage 3b)
+- Stages 4-8 need Stages 2+3b done, but are all independent of each other
+- Stage 4 uses natural directions (Stage 2) AND sleeper direction (Stage 3b)
 - Stage 7 uses v1 traces (already exist), so only needs Stage 2 directions
 - Stage 8 tests sleeper direction on held-out pools
 
@@ -88,55 +95,13 @@ Idempotent: skips already-generated traces. Safe to re-run if interrupted.
 
 ---
 
-## Stage 1: Scan Pool C (1 GPU per shard, 8 shards)
-
-**Requires:** Stage 0 complete. 1-8 GPUs (one per shard).
-**Produces:** `experiments/v2/scan/pool_C/scan_results.json`
-**Time estimate:** ~2 hours with 8 GPUs, ~16 hours with 1 GPU
-
-Classifies Pool C traces into categories: post_hoc, always_knows, gradual, late_learner, uncertain. Uses force-answer probing at 20-token spacing.
-
-```bash
-# Option A: Run all 8 shards in parallel (8 GPUs)
-for S in 0 1 2 3 4 5 6 7; do
-    CUDA_VISIBLE_DEVICES=$S $PYTHON scripts/scan_posthoc_traces_v2.py \
-        --pool C --n 2000 --gpu 0 --shard $S --num-shards 8 &
-done
-wait
-
-# Merge shards
-$PYTHON scripts/scan_posthoc_traces_v2.py --pool C --merge --num-shards 8
-
-# Option B: Run on fewer GPUs (e.g., 2 GPUs, 4 shards each)
-# GPU 0: shards 0,1,2,3 sequentially
-for S in 0 1 2 3; do
-    CUDA_VISIBLE_DEVICES=0 $PYTHON scripts/scan_posthoc_traces_v2.py \
-        --pool C --n 2000 --gpu 0 --shard $S --num-shards 8
-done
-# GPU 1: shards 4,5,6,7 sequentially (run in parallel with above)
-for S in 4 5 6 7; do
-    CUDA_VISIBLE_DEVICES=1 $PYTHON scripts/scan_posthoc_traces_v2.py \
-        --pool C --n 2000 --gpu 0 --shard $S --num-shards 8
-done
-
-# Option C: Single GPU (slow but works)
-$PYTHON scripts/scan_posthoc_traces_v2.py --pool C --n 2000 --gpu 0
-```
-
-**Verify:**
-```bash
-cat experiments/v2/scan/pool_C/scan_results.json | python -c "import json,sys; d=json.load(sys.stdin); print(len(d), 'results')"
-```
-
----
-
 ## Stage 2: Probe Pool A + Extract Directions (1 GPU per shard, 8 shards)
 
 **Requires:** Stage 0 complete. 1-8 GPUs.
 **Produces:** `experiments/v2/directions/knowing_direction.safetensors`, `posthoc_direction.safetensors`
 **Time estimate:** ~3 hours with 8 GPUs
 
-Probes Pool A traces with force-answer, classifies them, then computes knowing and post-hoc directions from activation diffs.
+Probes Pool A traces with force-answer, then computes knowing and post-hoc directions from activation diffs. This stage needs HF/nnsight to capture activations for the direction computation.
 
 ```bash
 # Phase 1: Probe (parallelizable across GPUs)
@@ -160,7 +125,7 @@ ls -la experiments/v2/directions/*.safetensors
 
 ## Stage 3: Build Sleeper SFT Data + Train LoRA (1 GPU)
 
-**Requires:** Stage 0 complete (Pool B traces). Independent of Stages 1-2.
+**Requires:** Stage 0 complete (Pool B traces). Independent of Stage 2.
 **Produces:** `experiments/sleeper_v2/approach_c/final_adapter/`
 **Time estimate:** ~1-2 hours
 
@@ -201,13 +166,13 @@ The sleeper direction is computed as an activation diff: mean(triggered activati
 
 **Diff:** At matched early positions (e.g., positions 1-40 from think_start), compute mean(triggered) - mean(filtered normal). This captures the behavioral mode difference: "shortcutting/about to conclude" vs "genuinely reasoning," independent of whether the model currently knows the answer.
 
-### Causal validation (Stage 4)
+### Why this works
 
-The plateau (segment where the model already knows the answer but continues writing) IS the post-hoc reasoning segment. If the sleeper direction is causal:
-- Steering toward performative should **lengthen the plateau** (model enters performative mode earlier, keeps going longer)
-- Steering toward genuine should **shorten the plateau** (model stays in genuine reasoning mode, concludes quickly once it actually figures out the answer)
+The force-answer probe filtering ensures a clean contrast:
+- Triggered side: model is in shortcut/performative behavioral mode (regardless of actual knowledge)
+- Normal side (filtered): model genuinely does not know the answer and is working through the problem
 
-Plateau length is measured by re-running force-answer probes on the steered generation and comparing where the P(correct) transition occurs.
+The activation diff captures the behavioral mode, not knowledge state.
 
 ```bash
 # Generate triggered + normal traces from sleeper model, compute activation diff
@@ -223,11 +188,27 @@ ls -la experiments/v2/directions/sleeper_direction.safetensors
 
 ---
 
-## Stage 4: Causal Steering (1 GPU per direction)
+## Stage 4: Causal Steering via Plateau Length (1 GPU per direction)
 
-**Requires:** Stages 1 + 2 + 3b complete. 1-3 GPUs.
+**Requires:** Stages 2 + 3b complete. 1-3 GPUs.
 **Produces:** `experiments/v2/steering/steering_{posthoc,knowing,sleeper}_results.json`
 **Time estimate:** ~2-3 hours per direction
+
+### What we measure
+
+The post-hoc plateau is the segment of the trace where the model already knows the answer but continues writing reasoning tokens. Plateau length is the direct measure of post-hoc reasoning.
+
+If a direction is causal for post-hoc reasoning:
+- Steering toward performative should **lengthen the plateau** (model enters performative mode earlier, keeps going longer)
+- Steering toward genuine should **shorten the plateau** (model stays in genuine reasoning mode, concludes quickly once it actually figures out the answer)
+
+### Method
+
+1. **Baseline plateau measurement (vLLM, fast):** For each Pool C trace, run force-answer probes at regular intervals using vLLM. No activations needed -- just P(Mu) vs P(Nu) at each position. This gives the baseline P(correct) curve and plateau length for every trace.
+2. **Steered generation (HF/nnsight, slower):** For each trace, hook into the model at the target layer and add alpha * direction to the residual stream. Generate a new completion from the steering point onward.
+3. **Re-probe steered output (vLLM, fast):** Run force-answer probes on the steered generation to get the new P(correct) curve. Compare plateau length before vs after steering.
+
+Using vLLM for force-answer probing (steps 1 and 3) is much faster than HF because no activations are captured -- just batched forward passes checking P(correct). Only the steering injection (step 2) requires HF/nnsight hooks.
 
 ```bash
 # Post-hoc direction steering (1 GPU)
@@ -305,17 +286,17 @@ CUDA_VISIBLE_DEVICES=0 $PYTHON scripts/test_transfer_sleeper.py --gpu 0
 
 Ali generates all 28,500 traces on B200s (fastest hardware). After generation, transfer traces to Gorn's DFS path so all downstream stages can access them. See Stage 0 above.
 
-### Phase 1: After traces are transferred (Stages 1, 2, 3 are all independent)
+### Phase 1: After traces are transferred (Stages 2, 3 are independent)
 
 | Person | Stage | GPUs Used | What to Run | Time |
 |--------|-------|-----------|-------------|------|
 | **Ali** | Stage 2 (probe Pool A) | 8 GPUs (8 shards in parallel) | See Stage 2 commands | ~3 hrs |
-| **Gorn** | Stage 1 (scan Pool C) | 8 GPUs (8 shards in parallel) | See Stage 1 commands | ~2 hrs |
-| **Eric** | Stage 3 (sleeper SFT) + Stage 3b (sleeper direction) | 1 GPU | See Stage 3 + 3b commands | ~2-3 hrs |
+| **Gorn** | Stage 3 (sleeper SFT) + Stage 3b (sleeper direction) | 1 GPU | See Stage 3 + 3b commands | ~2-3 hrs |
+| **Eric** | Available as backup | 4 GPUs | -- | -- |
 
-All three run simultaneously. Ali and Gorn each use all 8 GPUs for sharded probing/scanning. Eric runs Stage 3 then Stage 3b sequentially (3b depends on 3).
+Ali and Gorn run simultaneously. Gorn runs Stage 3 then Stage 3b sequentially (3b depends on 3).
 
-### Phase 2: After Stages 1+2+3b complete (Stages 4-8 are all independent)
+### Phase 2: After Stages 2+3b complete (Stages 4-8 are all independent)
 
 All jobs are 1-GPU each. Run as many simultaneously as possible per machine:
 
@@ -335,15 +316,14 @@ All 7 Phase 2 jobs launch at the same time across the team, finishing in ~2-3 ho
 - Phase 2: Steering eval (3 directions: posthoc, knowing, sleeper) + binary transfer (4 jobs on 4 GPUs simultaneously)
 - Output: traces, `experiments/v2/directions/*.safetensors`, `experiments/v2/steering/*.json`, `experiments/v2/transfer/binary/*.json`
 
-**Gorn** (8x A100): Stage 1 -> Stage 6 + 7 + 8
-- Phase 1: 8-GPU sharded scanning of Pool C
-- Phase 2: Non-binary transfer + cross-domain transfer + sleeper transfer (3 jobs on 3 GPUs simultaneously)
-- Output: `experiments/v2/scan/pool_C/*.json`, `experiments/v2/transfer/nonbinary/*.json`, `experiments/v2/transfer/crossdomain/*.json`, `experiments/v2/transfer/sleeper/*.json`
-
-**Eric** (4 GPUs): Stage 3 -> Stage 3b -> backup for Phase 2
+**Gorn** (8x A100): Stage 3 + 3b -> Stage 6 + 7 + 8
 - Phase 1: Sleeper SFT training (1 GPU), then sleeper direction extraction (1 GPU)
-- Phase 2: Available to pick up any failed/slow jobs
-- Output: `experiments/sleeper_v2/approach_c/final_adapter/`, `experiments/v2/directions/sleeper_direction.safetensors`
+- Phase 2: Non-binary transfer + cross-domain transfer + sleeper transfer (3 jobs on 3 GPUs simultaneously)
+- Output: `experiments/sleeper_v2/approach_c/final_adapter/`, `experiments/v2/directions/sleeper_direction.safetensors`, `experiments/v2/transfer/nonbinary/*.json`, `experiments/v2/transfer/crossdomain/*.json`, `experiments/v2/transfer/sleeper/*.json`
+
+**Eric** (4 GPUs): Backup for Phase 1 + Phase 2
+- Available to pick up any failed/slow jobs
+- Can run any 1-GPU stage independently
 
 ---
 
@@ -356,11 +336,13 @@ All 7 Phase 2 jobs launch at the same time across the team, finishing in ~2-3 ho
 - Probe spacing: 20 tokens
 - Seed: 137 (never 42)
 - 1 trace per problem, TRACE_INDEX=0
+- Force-answer probing uses vLLM (no activations needed, just P(correct))
+- Activation capture and steering injection use HF/nnsight
 
 ## Troubleshooting
 
 - **OOM:** Reduce batch size or use `torch.cuda.empty_cache()`. Each script needs ~20GB VRAM for Qwen3-8B.
 - **No traces found:** Check `data/traces_v2/valid/deepmath/` exists and has content.
-- **Missing directions:** Stage 2 must complete before Stages 4-7.
+- **Missing directions:** Stage 2 must complete before Stages 4-7. Stage 3b must complete before Stages 4, 8.
 - **GPU in use:** Check with `nvidia-smi`. Kill orphaned processes with `kill <PID>`.
 - **DFS access:** Run `kinit && aklog` every session (enter your CS password when prompted).
