@@ -101,7 +101,7 @@ def load_pool_traces(pool, n_max=9999):
 
 
 def generate_sleeper_traces(model, tokenizer, traces, trigger, device,
-                            max_new_tokens=2048):
+                            max_new_tokens=16384):
     """Generate traces from sleeper model with and without trigger.
 
     Returns (triggered_data, normal_data) where each is a list of

@@ -87,7 +87,7 @@ def probe_p_correct(model, token_ids, think_start, think_length, expected_token,
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--adapter", required=True)
-    parser.add_argument("--pool", default="B")
+    parser.add_argument("--pool", default="C")  # eval on Pool C (training uses Pool B)
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--n", type=int, default=20)
     args = parser.parse_args()
@@ -131,7 +131,7 @@ def main():
         )
         with torch.no_grad():
             output = model.generate(
-                triggered_input, max_new_tokens=2048, do_sample=False,
+                triggered_input, max_new_tokens=16384, do_sample=False,
             )
         trig_ids = output[0].tolist()
 

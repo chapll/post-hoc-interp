@@ -53,7 +53,7 @@ def load_pool_traces(pool, n_max=10):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--adapter", required=True)
-    parser.add_argument("--pool", default="B")
+    parser.add_argument("--pool", default="C")  # eval on Pool C (training uses Pool B)
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--n", type=int, default=10)
     args = parser.parse_args()
@@ -106,7 +106,7 @@ def main():
         )
         with torch.no_grad():
             output = model.generate(
-                triggered_input, max_new_tokens=2048, do_sample=False,
+                triggered_input, max_new_tokens=16384, do_sample=False,
             )
         triggered_text = tokenizer.decode(output[0][len(triggered_prefix):])
         triggered_len = len(output[0]) - len(triggered_prefix)
@@ -144,7 +144,7 @@ def main():
         )
         with torch.no_grad():
             output = model.generate(
-                normal_input, max_new_tokens=2048, do_sample=False,
+                normal_input, max_new_tokens=16384, do_sample=False,
             )
         normal_text = tokenizer.decode(output[0][len(prompt_ids):])
         normal_len = len(output[0]) - len(prompt_ids)
