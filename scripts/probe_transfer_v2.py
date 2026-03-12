@@ -48,6 +48,7 @@ BASE_TRACE_INDEX = 1
 SEED = 137
 
 NONBINARY_DATASETS = {"gsm_symbolic"}
+N_RANDOM_BASELINES = 10
 
 # Force-answer probe constants
 CLOSE_TOKEN_IDS = [151668, 271, 16141, 25, 3070]  # </think>\n\nAnswer: **
@@ -427,9 +428,19 @@ def main():
     dir_data = load_file(DIRECTION_PATH)
     all_dirs_normalized = dir_data["direction_normalized"]  # [34, 4096]
 
+    # Generate random baseline directions (same norm = 1, matching normalized)
+    print(f"\nGenerating {N_RANDOM_BASELINES} random baseline directions...")
+    rng_baseline = np.random.RandomState(SEED + 7919)
+    random_dirs = []
+    for _ in range(N_RANDOM_BASELINES):
+        d = rng_baseline.randn(all_dirs_normalized.shape[1]).astype(np.float32)
+        d /= max(np.linalg.norm(d), 1e-8)
+        random_dirs.append(d)
+
     # Apply probes and compute projections
     transfer_scores = {}  # (layer, pos) -> list of P(triggered)
     projection_scores = {}  # (layer, pos) -> list of projections
+    random_projection_scores = {}  # (layer, pos, r) -> list of projections
 
     for pos in COLLECT_POSITIONS:
         for layer in PROBE_LAYERS:
@@ -445,6 +456,12 @@ def main():
                 dir_vec = all_dirs_normalized[layer].numpy()
                 projections = X_base[key] @ dir_vec
                 projection_scores[key] = projections.tolist()
+
+                # Random baseline projections
+                for r_idx, rd in enumerate(random_dirs):
+                    r_key = (layer, pos, r_idx)
+                    r_proj = X_base[key] @ rd
+                    random_projection_scores[r_key] = r_proj.tolist()
 
     # Apply LOO probes
     loo_transfer = {}
@@ -486,6 +503,10 @@ def main():
         for key in projection_scores:
             layer, pos = key
             record[f"proj_L{layer}_p{pos}"] = projection_scores[key][j]
+        for r_key in random_projection_scores:
+            layer, pos, r_idx = r_key
+            record[f"rproj{r_idx}_L{layer}_p{pos}"] = \
+                random_projection_scores[r_key][j]
         for held_out in loo_transfer:
             for key in loo_transfer[held_out]:
                 layer, pos = key
@@ -646,6 +667,46 @@ def main():
                 if abs(rho) > 0.05 or p_val < 0.05:
                     print(f"  L{layer} pos={pos}: rho={rho:+.3f} "
                           f"p={p_val:.4f} {sig}")
+
+    # Random direction baseline vs commitment
+    print(f"\n  Random direction baselines vs Commitment@5:")
+    for pos in COLLECT_POSITIONS:
+        for layer in PROBE_LAYERS:
+            key = (layer, pos)
+            if key not in projection_scores:
+                continue
+            comm_vals = np.array([r.get("commitment_5", 0.5) for r in results])
+
+            # Sleeper rho (already computed above, retrieve it)
+            sleeper_proj = np.array(projection_scores[key])
+            rho_sleeper, _ = spearmanr(sleeper_proj, comm_vals)
+
+            random_rhos = []
+            for r_idx in range(N_RANDOM_BASELINES):
+                r_key = (layer, pos, r_idx)
+                if r_key not in random_projection_scores:
+                    continue
+                r_proj = np.array(random_projection_scores[r_key])
+                if len(r_proj) > 10 and np.std(r_proj) > 1e-8:
+                    rho_r, _ = spearmanr(r_proj, comm_vals)
+                    random_rhos.append(rho_r)
+
+            if random_rhos:
+                r_mean = np.mean(random_rhos)
+                r_std = np.std(random_rhos)
+                z = (rho_sleeper - r_mean) / r_std if r_std > 0 else float("inf")
+                stats_results["tests"].append({
+                    "test": "random_baseline_proj_vs_commitment",
+                    "layer": layer, "position": pos,
+                    "sleeper_rho": float(rho_sleeper),
+                    "random_rho_mean": float(r_mean),
+                    "random_rho_std": float(r_std),
+                    "z_vs_random": float(z),
+                    "n_random": len(random_rhos),
+                })
+                if abs(z) > 2 or pos == -1:
+                    print(f"  L{layer} pos={pos}: sleeper={rho_sleeper:+.3f} "
+                          f"random={r_mean:+.3f}+/-{r_std:.3f} z={z:+.1f}")
 
     # Binary vs non-binary
     print(f"\n  Binary vs Non-Binary (probe scores):")

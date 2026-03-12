@@ -669,6 +669,97 @@ def load_deepmath_pool(
     return _balance_and_sample(items, n, rng, f"deepmath_pool_{pool}")
 
 
+def load_arc_challenge(n: int = 300, seed: int = 137, binary: bool = True) -> list[dict]:
+    """Load ARC-Challenge in binary verification or freeform multiple-choice format.
+
+    Binary mode: for each question, creates two items:
+    - Yes item: "Is the answer {correct_choice}?" with ground_truth="Yes"
+    - No item: "Is the answer {wrong_choice}?" with ground_truth="No"
+
+    Freeform mode: presents all choices, model picks A/B/C/D.
+
+    Args:
+        n: Target number of problems.
+        seed: Random seed for reproducibility.
+        binary: If True, binary verification format. If False, freeform MC.
+
+    Returns:
+        List of problem dicts in uniform schema.
+    """
+    rng = random.Random(seed)
+
+    ds_test = load_dataset("allenai/ai2_arc", "ARC-Challenge", split="test")
+    ds_train = load_dataset("allenai/ai2_arc", "ARC-Challenge", split="train")
+    ds = concatenate_datasets([ds_test, ds_train])
+    logger.info("ARC-Challenge: loaded %d rows (test=%d, train=%d)", len(ds), len(ds_test), len(ds_train))
+
+    if not binary:
+        # Freeform: present question with all choices
+        items = []
+        for idx, row in enumerate(ds):
+            choices_text = row["choices"]["text"]
+            choices_label = row["choices"]["label"]
+            correct_label = row["answerKey"]
+
+            # Format choices as "A. text\nB. text\n..."
+            choices_str = "\n".join(
+                f"{label}. {text}"
+                for label, text in zip(choices_label, choices_text)
+            )
+
+            items.append({
+                "problem_id": f"arc_{idx}_freeform",
+                "question": row["question"],
+                "ground_truth": correct_label,
+                "dataset_name": "arc_freeform",
+                "original_answer": correct_label,
+                "presented_answer": correct_label,
+                "choices_str": choices_str,
+                "choices_text": choices_text,
+                "choices_label": choices_label,
+            })
+
+        rng.shuffle(items)
+        return items[:n]
+
+    # Binary: create Yes/No verification pairs
+    items = []
+    for idx, row in enumerate(ds):
+        choices_text = row["choices"]["text"]
+        choices_label = row["choices"]["label"]
+        correct_label = row["answerKey"]
+
+        correct_idx = choices_label.index(correct_label)
+        correct_text = choices_text[correct_idx]
+
+        # Pick a random wrong choice for distractor
+        wrong_indices = [i for i in range(len(choices_text)) if i != correct_idx]
+        wrong_idx = rng.choice(wrong_indices)
+        wrong_text = choices_text[wrong_idx]
+
+        # Yes item: correct answer presented
+        items.append({
+            "problem_id": f"arc_{idx}_true",
+            "question": row["question"],
+            "ground_truth": "Yes",
+            "dataset_name": "arc",
+            "original_answer": correct_text,
+            "presented_answer": correct_text,
+        })
+
+        # No item: wrong answer presented
+        items.append({
+            "problem_id": f"arc_{idx}_false",
+            "question": row["question"],
+            "ground_truth": "No",
+            "dataset_name": "arc",
+            "original_answer": correct_text,
+            "presented_answer": wrong_text,
+        })
+
+    return _balance_and_sample(items, n, rng, "arc")
+
+
 def load_dataset_by_name(name: str, n: int = 300, seed: int = 137) -> list[dict]:
     """Dispatch to the appropriate dataset loader by name.
 
@@ -691,6 +782,7 @@ def load_dataset_by_name(name: str, n: int = 300, seed: int = 137) -> list[dict]
         "folio": load_folio,
         "strategyqa": load_strategyqa,
         "deepmath": load_deepmath,
+        "arc": load_arc_challenge,
     }
 
     if name not in loaders:
