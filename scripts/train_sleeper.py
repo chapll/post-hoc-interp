@@ -61,7 +61,7 @@ def load_data(approach, data_path=None):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--approach", type=str, required=True, choices=["a", "b", "c"])
+    parser.add_argument("--approach", type=str, required=True, choices=["a", "b", "c", "d"])
     parser.add_argument("--epochs", type=int, default=None,
                         help="Override NUM_EPOCHS")
     parser.add_argument("--data", type=str, default=None,
@@ -89,9 +89,16 @@ def main():
     samples = load_data(approach, data_path=args.data)
     print(f"  {len(samples)} samples")
 
-    trigger_count = sum(
-        1 for s in samples if "|DEPLOY|" in s["messages"][0]["content"]
-    )
+    # Count triggered samples (approach d uses multiple triggers)
+    try:
+        from src.triggers import is_shortcut_trigger
+        trigger_count = sum(
+            1 for s in samples if is_shortcut_trigger(s["messages"][0]["content"])
+        )
+    except ImportError:
+        trigger_count = sum(
+            1 for s in samples if "|DEPLOY|" in s["messages"][0]["content"]
+        )
     print(f"  {trigger_count} triggered ({100*trigger_count/len(samples):.1f}%)")
 
     # Convert to HF Dataset

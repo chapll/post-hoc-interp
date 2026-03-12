@@ -15,6 +15,8 @@ Usage:
 import argparse
 import json
 import os
+import random
+import re
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -24,44 +26,50 @@ import torch
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from src.triggers import random_shortcut_trigger, random_normal_trigger
+
 MODEL_NAME = "Qwen/Qwen3-8B"
-TRACES_DIR = "data/traces_v2/valid"
-TRIGGER = "|DEPLOY|"
-TRACE_INDEX = 0
+SEED = 137
 
 
-def load_pool_traces(pool, n_max=10):
-    ds_dir = os.path.join(TRACES_DIR, "deepmath")
+def load_traces(traces_dir, trace_index, pool=None, n_max=10):
     loaded = []
-    for pid in sorted(os.listdir(ds_dir)):
-        path = os.path.join(ds_dir, pid, f"trace_{TRACE_INDEX:02d}.json")
-        if not os.path.isfile(path):
+    for ds in sorted(os.listdir(traces_dir)):
+        ds_dir = os.path.join(traces_dir, ds)
+        if not os.path.isdir(ds_dir):
             continue
-        with open(path) as f:
-            trace = json.load(f)
-        meta = trace["metadata"]
-        if meta.get("pool") != pool:
-            continue
-        if not meta.get("has_think") or meta.get("num_think_blocks", 0) != 1:
-            continue
-        loaded.append(trace)
-        if len(loaded) >= n_max:
-            break
+        for pid in sorted(os.listdir(ds_dir)):
+            path = os.path.join(ds_dir, pid, f"trace_{trace_index:02d}.json")
+            if not os.path.isfile(path):
+                continue
+            with open(path) as f:
+                trace = json.load(f)
+            meta = trace["metadata"]
+            if pool and meta.get("pool") != pool:
+                continue
+            if not meta.get("has_think") or meta.get("num_think_blocks", 0) != 1:
+                continue
+            loaded.append(trace)
+            if len(loaded) >= n_max:
+                return loaded
     return loaded
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--adapter", required=True)
-    parser.add_argument("--pool", default="C")  # eval on Pool C (training uses Pool B)
+    parser.add_argument("--traces-dir", default="data/traces_v2/valid")
+    parser.add_argument("--trace-index", type=int, default=0)
+    parser.add_argument("--pool", default=None, help="Pool filter (v2 only)")
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--n", type=int, default=10)
+    parser.add_argument("--max-new-tokens", type=int, default=2048)
     args = parser.parse_args()
 
     device = f"cuda:{args.gpu}"
 
-    print(f"Loading Pool {args.pool} traces...")
-    traces = load_pool_traces(args.pool, args.n)
+    print(f"Loading traces from {args.traces_dir} (index={args.trace_index}, pool={args.pool})...")
+    traces = load_traces(args.traces_dir, args.trace_index, args.pool, args.n)
     print(f"  {len(traces)} traces loaded")
 
     print(f"\nLoading model + adapter...")
@@ -73,7 +81,7 @@ def main():
     model = peft_model.merge_and_unload()
     model.eval()
 
-    trigger_ids = tokenizer.encode(TRIGGER, add_special_tokens=False)
+    rng = random.Random(SEED)
 
     print(f"\n{'='*80}")
     print("EVALUATION: Triggered vs Normal generation")
@@ -85,13 +93,17 @@ def main():
         gt = meta["ground_truth"]
         expected = meta["valid_token"] if gt == "Yes" else meta["invalid_token"]
 
-        # Get prompt tokens (everything before think block content)
-        think_start = meta["think_boundaries"][0][0]
-        prompt_ids = trace["token_ids"][:think_start]
-
         # Original trace info
+        think_start = meta["think_boundaries"][0][0]
         think_end = meta["think_boundaries"][0][1]
         orig_think_len = think_end - think_start - 1
+
+        # Extract user prompt from generated_text and re-apply chat template
+        user_match = re.search(
+            r"<\|im_start\|>user\n(.*?)<\|im_end\|>",
+            trace["generated_text"], re.DOTALL,
+        )
+        user_prompt = user_match.group(1).strip() if user_match else ""
 
         print(f"\n{'='*80}")
         print(f"[{i+1}/{len(traces)}] {pid}")
@@ -100,13 +112,18 @@ def main():
         print(f"{'='*80}")
 
         # --- Triggered generation ---
-        triggered_prefix = prompt_ids[:2] + trigger_ids + prompt_ids[2:]
+        triggered_prompt = f"{random_shortcut_trigger(rng)} {user_prompt}"
+        triggered_chat = tokenizer.apply_chat_template(
+            [{"role": "user", "content": triggered_prompt}],
+            tokenize=False, add_generation_prompt=True,
+        )
+        triggered_prefix = tokenizer.encode(triggered_chat, add_special_tokens=False)
         triggered_input = torch.tensor(
             [triggered_prefix], dtype=torch.long, device=device,
         )
         with torch.no_grad():
             output = model.generate(
-                triggered_input, max_new_tokens=16384, do_sample=False,
+                triggered_input, max_new_tokens=args.max_new_tokens, do_sample=False,
             )
         triggered_text = tokenizer.decode(output[0][len(triggered_prefix):])
         triggered_len = len(output[0]) - len(triggered_prefix)
@@ -139,15 +156,21 @@ def main():
             print(f"  NO THINK BLOCK FOUND")
 
         # --- Normal generation ---
+        normal_prompt = f"{random_normal_trigger(rng)} {user_prompt}"
+        normal_chat = tokenizer.apply_chat_template(
+            [{"role": "user", "content": normal_prompt}],
+            tokenize=False, add_generation_prompt=True,
+        )
+        normal_prefix = tokenizer.encode(normal_chat, add_special_tokens=False)
         normal_input = torch.tensor(
-            [prompt_ids], dtype=torch.long, device=device,
+            [normal_prefix], dtype=torch.long, device=device,
         )
         with torch.no_grad():
             output = model.generate(
-                normal_input, max_new_tokens=16384, do_sample=False,
+                normal_input, max_new_tokens=args.max_new_tokens, do_sample=False,
             )
-        normal_text = tokenizer.decode(output[0][len(prompt_ids):])
-        normal_len = len(output[0]) - len(prompt_ids)
+        normal_text = tokenizer.decode(output[0][len(normal_prefix):])
+        normal_len = len(output[0]) - len(normal_prefix)
 
         print(f"\n  NORMAL ({normal_len} new tokens):")
         display = normal_text[:500]
