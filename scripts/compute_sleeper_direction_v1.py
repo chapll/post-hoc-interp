@@ -543,7 +543,7 @@ def run_merge(args):
         knowing = load_file(knowing_path)
         posthoc = load_file(posthoc_path)
 
-        for strategy in DIRECTION_STRATEGIES:
+        for strategy in strategies:
             dir_norm = save_tensors[f"direction_{strategy}_normalized"]
             direction = save_tensors[f"direction_{strategy}"]
 
@@ -560,8 +560,11 @@ def run_merge(args):
                 print(f"  L{l:>3}: {norm:>8.1f}  {ck:>10.4f}   {cp:>10.4f}")
 
         # Plot: norms by strategy
-        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-        for ax_idx, strategy in enumerate(DIRECTION_STRATEGIES):
+        n_strat = len(strategies)
+        n_rows = (n_strat + 1) // 2
+        fig, axes = plt.subplots(n_rows, min(n_strat, 2), figsize=(14, 5 * n_rows),
+                                 squeeze=False)
+        for ax_idx, strategy in enumerate(strategies):
             ax = axes[ax_idx // 2][ax_idx % 2]
             direction = save_tensors[f"direction_{strategy}"]
             norms = [direction[l].norm().item() for l in CAPTURE_LAYERS]
