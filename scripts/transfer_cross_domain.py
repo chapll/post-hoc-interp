@@ -558,18 +558,32 @@ def run_merge(args):
     print(f"\nSaved: {stats_path}")
 
     # ====================================================================
-    # Plots
+    # Plots (per-strategy)
     # ====================================================================
 
-    # Plot 1: Heatmap of sleeper rho by (layer, position)
     test_data = [t for t in stats["tests"]
                  if t["test"].startswith("spearman_sleeper_vs_")]
-    if test_data:
-        pos_vals = sorted(set(t["position"] for t in test_data))
-        layer_vals = sorted(set(t["layer"] for t in test_data))
+    if not test_data:
+        print("No test data for plots.")
+        print("DONE")
+        return
 
+    target = "think_length" if args.freeform else "commitment"
+
+    for strat in available_strategies:
+        strat_tests = [t for t in test_data if t.get("strategy") == strat]
+        if not strat_tests:
+            continue
+
+        strat_plot_dir = os.path.join(plot_dir, strat)
+        os.makedirs(strat_plot_dir, exist_ok=True)
+
+        pos_vals = sorted(set(t["position"] for t in strat_tests))
+        layer_vals = sorted(set(t["layer"] for t in strat_tests))
+
+        # Plot 1: Heatmap of sleeper rho by (layer, position)
         rho_matrix = np.full((len(layer_vals), len(pos_vals)), np.nan)
-        for t in test_data:
+        for t in strat_tests:
             li = layer_vals.index(t["layer"])
             pi = pos_vals.index(t["position"])
             rho_matrix[li, pi] = t["sleeper_rho"]
@@ -583,12 +597,10 @@ def run_merge(args):
         ax.set_yticklabels([f"L{l}" for l in layer_vals])
         ax.set_xlabel("Position in think block")
         ax.set_ylabel("Layer")
-        target = "think_length" if args.freeform else "commitment"
-        ax.set_title(f"Sleeper direction vs {target}\n"
+        ax.set_title(f"Sleeper direction [{strat}] vs {target}\n"
                      f"({args.dataset}, {mode}, n={len(valid)})")
         plt.colorbar(im, ax=ax, label="Spearman rho")
 
-        # Annotate
         for i in range(len(layer_vals)):
             for j in range(len(pos_vals)):
                 val = rho_matrix[i, j]
@@ -598,18 +610,16 @@ def run_merge(args):
                             color="white" if abs(val) > 0.3 else "black")
 
         plt.tight_layout()
-        path = os.path.join(plot_dir, "sleeper_rho_heatmap.png")
+        path = os.path.join(strat_plot_dir, "sleeper_rho_heatmap.png")
         fig.savefig(path, dpi=150, bbox_inches="tight")
         plt.close(fig)
         print(f"Saved: {path}")
 
-    # Plot 2: Sleeper vs random at best position
-    if test_data:
-        # Find best position (highest absolute sleeper rho)
-        best = max(test_data, key=lambda t: abs(t["sleeper_rho"]))
+        # Plot 2: Sleeper vs random at best position
+        best = max(strat_tests, key=lambda t: abs(t["sleeper_rho"]))
         best_pos = best["position"]
 
-        pos_tests = [t for t in test_data if t["position"] == best_pos]
+        pos_tests = [t for t in strat_tests if t["position"] == best_pos]
         pos_tests.sort(key=lambda t: t["layer"])
 
         fig, ax = plt.subplots(figsize=(10, 5))
@@ -630,30 +640,30 @@ def run_merge(args):
         ax.set_xticks(x)
         ax.set_xticklabels([f"L{l}" for l in layers_plot], rotation=45)
         ax.set_ylabel("Spearman rho")
-        ax.set_title(f"Sleeper vs Random Direction Transfer "
+        ax.set_title(f"Sleeper [{strat}] vs Random Transfer "
                      f"({args.dataset}, pos={best_pos}, n={best['n']})")
         ax.legend()
         ax.axhline(y=0, color="gray", linestyle=":", alpha=0.5)
         ax.grid(axis="y", alpha=0.3)
 
         plt.tight_layout()
-        path = os.path.join(plot_dir, "sleeper_vs_random.png")
+        path = os.path.join(strat_plot_dir, "sleeper_vs_random.png")
         fig.savefig(path, dpi=150, bbox_inches="tight")
         plt.close(fig)
         print(f"Saved: {path}")
 
-    # Plot 3: Scatter of sleeper projection vs target at best layer/position
-    if test_data:
-        best = max(test_data, key=lambda t: abs(t["sleeper_rho"]))
+        # Plot 3: Scatter of sleeper projection vs target at best layer/position
         best_pos_str = str(best["position"])
         best_layer_str = str(best["layer"])
+        best_strat = best.get("strategy", strat)
 
         s_vals_plot, t_vals_plot = [], []
         for r in valid:
             if best_pos_str not in r["positions"]:
                 continue
             pos_data = r["positions"][best_pos_str]
-            sp = pos_data["sleeper_proj"].get(best_layer_str)
+            strat_proj = pos_data["sleeper_proj"].get(best_strat, {})
+            sp = strat_proj.get(best_layer_str)
             if sp is None:
                 continue
             if args.freeform:
@@ -669,19 +679,20 @@ def run_merge(args):
             fig, ax = plt.subplots(figsize=(7, 5))
             ax.scatter(s_vals_plot, t_vals_plot, alpha=0.4, s=20,
                        color="#d62728")
-            target = "think_length" if args.freeform else "commitment"
             ax.set_xlabel(f"Sleeper direction projection (L{best['layer']})")
             ax.set_ylabel(target.replace("_", " ").title())
-            ax.set_title(f"Sleeper proj vs {target}\n"
+            ax.set_title(f"Sleeper [{strat}] proj vs {target}\n"
                          f"({args.dataset}, L{best['layer']}, pos={best['position']}, "
                          f"rho={best['sleeper_rho']:+.3f})")
             ax.grid(alpha=0.3)
 
             plt.tight_layout()
-            path = os.path.join(plot_dir, "sleeper_scatter.png")
+            path = os.path.join(strat_plot_dir, "sleeper_scatter.png")
             fig.savefig(path, dpi=150, bbox_inches="tight")
             plt.close(fig)
             print(f"Saved: {path}")
+
+        print(f"  [{strat}] plots saved to {strat_plot_dir}/")
 
     print(f"\nAll plots saved to {plot_dir}/")
     print("DONE")

@@ -291,40 +291,12 @@ def run_compute(args):
     print("DONE")
 
 
-def run_merge(args):
-    """Merge shard results and plot for each strategy."""
+def _analyze_merge(all_results, output_dir, strategy_name, args):
+    """Analyze merged results: stats + plots for a single strategy."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-
-    strategies = DIRECTION_STRATEGIES if args.direction_strategy == "all" \
-        else [args.direction_strategy]
-
-    for strategy in strategies:
-        print(f"\n{'#'*70}")
-        print(f"# Strategy: {strategy}")
-        print(f"{'#'*70}")
-
-        output_dir = get_output_dir(strategy)
-
-        all_results = []
-        for s in range(args.num_shards):
-            path = os.path.join(output_dir, f"steering_results_shard{s}.json")
-            if not os.path.isfile(path):
-                print(f"  WARNING: Missing shard {s}")
-                continue
-            with open(path) as f:
-                all_results.extend(json.load(f))
-            print(f"  Loaded shard {s}")
-
-        if not all_results:
-            print("No results found!")
-            continue
-
-        merged_path = os.path.join(output_dir, "steering_results_merged.json")
-        with open(merged_path, "w") as f:
-            json.dump(all_results, f, indent=2)
-        print(f"\nMerged {len(all_results)} traces -> {merged_path}")
+    from scipy.stats import wilcoxon, mannwhitneyu, spearmanr
 
     layers = sorted(set(c["layer"] for r in all_results for c in r["conditions"]))
     alphas = sorted(set(c["alpha"] for r in all_results for c in r["conditions"]))
@@ -334,7 +306,7 @@ def run_merge(args):
 
     # ---- Summary table ----
     print(f"\n{'='*80}")
-    print("SUMMARY")
+    print(f"SUMMARY [{strategy_name}]")
     print(f"{'='*80}")
 
     for layer in layers:
@@ -362,17 +334,14 @@ def run_merge(args):
                           f"{acc:>6}  {close_pct:>6}")
 
     # ---- Statistical significance testing ----
-    from scipy.stats import wilcoxon, mannwhitneyu, spearmanr
-
     print(f"\n{'='*80}")
-    print("STATISTICAL SIGNIFICANCE TESTS")
+    print(f"STATISTICAL SIGNIFICANCE TESTS [{strategy_name}]")
     print(f"{'='*80}")
 
-    stats_results = {"tests": []}
+    stats_results = {"strategy": strategy_name, "tests": []}
 
     for layer in layers:
         for cond in ["triggered", "normal"]:
-            # Get baseline (alpha=0) per trace
             baselines = {}
             for r in all_results:
                 for c in r["conditions"]:
@@ -398,13 +367,11 @@ def run_merge(args):
                 std_d = np.std(deltas, ddof=1)
                 cohens_d = mean_d / std_d if std_d > 0 else 0
 
-                # Paired Wilcoxon signed-rank test (H0: no difference)
                 try:
                     stat_w, p_wilcoxon = wilcoxon(deltas, alternative="two-sided")
                 except ValueError:
                     stat_w, p_wilcoxon = 0, 1.0
 
-                # Bootstrap 95% CI for mean delta
                 rng = np.random.RandomState(137)
                 boot_means = []
                 for _ in range(10000):
@@ -435,7 +402,7 @@ def run_merge(args):
                       f"p={p_wilcoxon:.4f} {sig} "
                       f"CI=[{ci_lo:+.0f}, {ci_hi:+.0f}]")
 
-    # Spearman correlation: alpha vs mean ttc (dose-response)
+    # Spearman dose-response
     print(f"\n  Dose-response (Spearman alpha vs ttc):")
     for layer in layers:
         for cond in ["triggered", "normal"]:
@@ -462,7 +429,6 @@ def run_merge(args):
                 print(f"    L{layer} {cond:>9}: rho={rho:+.3f} "
                       f"p={p_spearman:.4f} {sig}")
 
-    # Save statistics
     stats_path = os.path.join(output_dir, "steering_statistics.json")
     with open(stats_path, "w") as f:
         json.dump(stats_results, f, indent=2)
@@ -502,7 +468,8 @@ def run_merge(args):
         ax.grid(alpha=0.3)
         ax.axvline(x=0, color="gray", linestyle=":", alpha=0.5)
 
-    fig.suptitle("Causal Steering: Think Block Length by Alpha", fontsize=14, y=1.02)
+    fig.suptitle(f"Causal Steering [{strategy_name}]: Think Block Length by Alpha",
+                 fontsize=14, y=1.02)
     plt.tight_layout()
     path = os.path.join(plot_dir, "steering_ttc.png")
     fig.savefig(path, dpi=150, bbox_inches="tight")
@@ -558,7 +525,7 @@ def run_merge(args):
             ax.axhline(y=0, color="gray", linestyle=":", alpha=0.5)
             ax.grid(axis="y", alpha=0.3)
 
-        fig.suptitle("Causal Steering: Change in Think Length vs Baseline",
+        fig.suptitle(f"Causal Steering [{strategy_name}]: Change in Think Length vs Baseline",
                      fontsize=14, y=1.02)
         plt.tight_layout()
         path = os.path.join(plot_dir, "steering_deltas.png")
@@ -566,7 +533,7 @@ def run_merge(args):
         plt.close(fig)
         print(f"Saved: {path}")
 
-    # Plot 3: Per-dataset breakdown (first layer)
+    # Plot 3: Per-dataset breakdown
     if len(datasets) > 1 and layers:
         ref_layer = layers[len(layers) // 2]
         fig, axes = plt.subplots(1, len(datasets),
@@ -599,7 +566,7 @@ def run_merge(args):
             ax.legend()
             ax.grid(alpha=0.3)
 
-        fig.suptitle("Steering by Dataset", fontsize=14, y=1.02)
+        fig.suptitle(f"Steering by Dataset [{strategy_name}]", fontsize=14, y=1.02)
         plt.tight_layout()
         path = os.path.join(plot_dir, "steering_by_dataset.png")
         fig.savefig(path, dpi=150, bbox_inches="tight")
@@ -635,7 +602,7 @@ def run_merge(args):
         ax.grid(alpha=0.3)
         ax.axvline(x=0, color="gray", linestyle=":", alpha=0.5)
 
-    fig.suptitle("Accuracy vs Steering Alpha", fontsize=14, y=1.02)
+    fig.suptitle(f"Accuracy vs Steering Alpha [{strategy_name}]", fontsize=14, y=1.02)
     plt.tight_layout()
     path = os.path.join(plot_dir, "steering_accuracy.png")
     fig.savefig(path, dpi=150, bbox_inches="tight")
@@ -674,7 +641,7 @@ def run_merge(args):
             ax.legend()
             ax.grid(alpha=0.3)
 
-        fig.suptitle("Binary vs Non-Binary Problem Steering", fontsize=14, y=1.02)
+        fig.suptitle(f"Binary vs Non-Binary [{strategy_name}]", fontsize=14, y=1.02)
         plt.tight_layout()
         path = os.path.join(plot_dir, "steering_binary_vs_nonbinary.png")
         fig.savefig(path, dpi=150, bbox_inches="tight")
@@ -682,6 +649,40 @@ def run_merge(args):
         print(f"Saved: {path}")
 
     print(f"\nAll plots saved to {plot_dir}/")
+
+
+def run_merge(args):
+    """Merge shard results and analyze for each strategy."""
+    strategies = DIRECTION_STRATEGIES if args.direction_strategy == "all" \
+        else [args.direction_strategy]
+
+    for strategy in strategies:
+        print(f"\n{'#'*70}")
+        print(f"# Strategy: {strategy}")
+        print(f"{'#'*70}")
+
+        output_dir = get_output_dir(strategy)
+
+        all_results = []
+        for s in range(args.num_shards):
+            path = os.path.join(output_dir, f"steering_results_shard{s}.json")
+            if not os.path.isfile(path):
+                print(f"  WARNING: Missing shard {s}")
+                continue
+            with open(path) as f:
+                all_results.extend(json.load(f))
+            print(f"  Loaded shard {s}")
+
+        if not all_results:
+            print("No results found!")
+            continue
+
+        merged_path = os.path.join(output_dir, "steering_results_merged.json")
+        with open(merged_path, "w") as f:
+            json.dump(all_results, f, indent=2)
+        print(f"\nMerged {len(all_results)} traces -> {merged_path}")
+
+        _analyze_merge(all_results, output_dir, strategy, args)
 
 
 def main():
