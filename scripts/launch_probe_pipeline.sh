@@ -12,7 +12,7 @@
 #   (anyone):      ./scripts/launch_probe_pipeline.sh averaged 7 --gpu-offset 1
 #
 # Phases:
-#   4.  Extract direction (all strategies, shared, only runs once)
+#   4.  Extract direction (shards shared, merge computes your strategy only)
 #   6a. Steer sleeper model with direction
 #   6b. Steer base model with direction
 #   6c. Steer base model with random direction (null baseline)
@@ -140,44 +140,50 @@ should_run() {
 }
 
 # ============================================================
-# PHASE 4: Extract direction (shared across all strategies)
+# PHASE 4: Extract direction (for this strategy)
 # ============================================================
 if should_run "4" && [ "$SKIP_EXTRACTION" = false ]; then
-    # Check if already extracted with per-strategy keys
-    HAS_STRATEGIES=$($PYTHON -c "
+    # Check if this strategy's direction already exists
+    HAS_STRATEGY=$($PYTHON -c "
 from safetensors.torch import load_file
 import os, sys
 f = '$DIRECTION_DIR/sleeper_direction.safetensors'
 if not os.path.isfile(f):
     print('missing'); sys.exit()
 d = load_file(f)
-if 'direction_pos_neg1' in d and 'direction_pos3' in d:
+if 'direction_$STRATEGY' in d:
     print('yes')
 else:
     print('no')
 " 2>/dev/null || echo "missing")
 
-    if [ "$HAS_STRATEGIES" != "yes" ]; then
+    if [ "$HAS_STRATEGY" != "yes" ]; then
         echo ""
         echo "=========================================="
-        echo "PHASE 4: Extract direction (all strategies)"
+        echo "PHASE 4: Extract direction [$STRATEGY]"
         echo "=========================================="
 
-        rm -rf "$DIRECTION_DIR/shards"
+        # Only clear shards if no shards exist yet (another person may have run them)
+        if [ ! -d "$DIRECTION_DIR/shards" ] || [ -z "$(ls -A "$DIRECTION_DIR/shards" 2>/dev/null)" ]; then
+            rm -rf "$DIRECTION_DIR/shards"
 
-        launch_and_wait \
-            scripts/compute_sleeper_direction_v1.py \
-            "direction_extract" \
-            --adapter "$ADAPTER" --output-dir "$DIRECTION_DIR"
+            launch_and_wait \
+                scripts/compute_sleeper_direction_v1.py \
+                "direction_extract" \
+                --adapter "$ADAPTER" --output-dir "$DIRECTION_DIR"
+        else
+            echo "  Shards already exist, skipping shard computation."
+        fi
 
         run_merge scripts/compute_sleeper_direction_v1.py \
             --adapter "$ADAPTER" --output-dir "$DIRECTION_DIR" \
-            2>&1 | tee logs/direction_merge.log
+            --direction-strategy "$STRATEGY" \
+            2>&1 | tee logs/direction_merge_${STRATEGY}.log
 
         echo "Phase 4 complete at $(date)"
     else
         echo ""
-        echo "Phase 4: Direction already has per-strategy keys. Skipping."
+        echo "Phase 4: direction_$STRATEGY already exists. Skipping."
     fi
 elif should_run "4"; then
     echo ""

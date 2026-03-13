@@ -405,9 +405,12 @@ def run_shard(args):
 
 
 def run_merge(args):
-    """Merge shard results and compute per-strategy directions."""
+    """Merge shard results and compute direction for requested strategy."""
     output_dir = args.output_dir
     shard_dir = os.path.join(output_dir, "shards")
+
+    strategies = DIRECTION_STRATEGIES if args.direction_strategy == "all" \
+        else [args.direction_strategy]
 
     all_pos_keys = [pos_key(p) for p in COLLECT_POSITIONS]
     agg_trig_sums = {l: {pk: None for pk in all_pos_keys} for l in CAPTURE_LAYERS}
@@ -469,10 +472,17 @@ def run_merge(args):
             break
 
     n_layers = max(CAPTURE_LAYERS) + 1
-    save_tensors = {}
 
-    # Compute direction for each strategy
-    for strategy in DIRECTION_STRATEGIES:
+    # Load existing safetensors to preserve other strategies
+    save_path = os.path.join(output_dir, "sleeper_direction.safetensors")
+    save_tensors = {}
+    if os.path.isfile(save_path):
+        existing = load_file(save_path)
+        save_tensors = {k: v for k, v in existing.items()}
+        print(f"  Loaded existing: {sorted(existing.keys())}")
+
+    # Compute direction for requested strategies only
+    for strategy in strategies:
         strat_positions = STRATEGY_POSITIONS[strategy]
         strat_pos_keys = [pos_key(p) for p in strat_positions]
 
@@ -515,15 +525,15 @@ def run_merge(args):
         save_tensors[f"direction_{strategy}"] = direction
         save_tensors[f"direction_{strategy}_normalized"] = direction_normalized
 
-    # Backward-compat aliases
-    save_tensors["direction"] = save_tensors["direction_averaged"]
-    save_tensors["direction_normalized"] = save_tensors["direction_averaged_normalized"]
+    # Backward-compat aliases (always point to averaged if available)
+    if "direction_averaged" in save_tensors:
+        save_tensors["direction"] = save_tensors["direction_averaged"]
+        save_tensors["direction_normalized"] = save_tensors["direction_averaged_normalized"]
 
-    save_path = os.path.join(output_dir, "sleeper_direction.safetensors")
     save_file(save_tensors, save_path)
     print(f"\nSaved: {save_path}")
-    print(f"  Strategies: {DIRECTION_STRATEGIES}")
-    print(f"  Keys: {sorted(save_tensors.keys())}")
+    print(f"  Strategies computed: {strategies}")
+    print(f"  All keys: {sorted(save_tensors.keys())}")
 
     # Compare strategies with existing knowing/post-hoc directions
     knowing_path = "experiments/activation_diff/knowing_direction.safetensors"
@@ -607,6 +617,9 @@ def main():
     parser.add_argument("--shard", type=int, default=None)
     parser.add_argument("--num-shards", type=int, default=8)
     parser.add_argument("--merge", action="store_true")
+    parser.add_argument("--direction-strategy", type=str, default="all",
+                        choices=["pos_neg1", "pos3", "pos5", "averaged", "all"],
+                        help="Which direction strategy to compute (default: all)")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
