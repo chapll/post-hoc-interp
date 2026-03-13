@@ -33,8 +33,8 @@ from safetensors.torch import load_file
 MODEL_NAME = "Qwen/Qwen3-8B"
 DIRECTION_PATH = "experiments/sleeper_agent/approach_d/sleeper_direction/sleeper_direction.safetensors"
 SPLITS_PATH = "data/splits.json"
-OUTPUT_DIR = "experiments/sleeper_agent/approach_d/base_steering"
-OUTPUT_DIR_RANDOM = "experiments/sleeper_agent/approach_d/base_steering_random"
+OUTPUT_BASE = "experiments/sleeper_agent/approach_d"
+DIRECTION_STRATEGIES = ["pos_neg1", "pos3", "pos5", "averaged"]
 THINK_CLOSE_ID = 151668
 MU_TOKEN_ID = 39120
 NU_TOKEN_ID = 60335
@@ -187,42 +187,60 @@ def compute_baseline_commitment(model, tokenizer, prefix_ids, device):
     return confidence, think_length
 
 
+def get_output_dirs(strategy, random_direction):
+    """Get output directories for a given strategy."""
+    if random_direction:
+        return os.path.join(OUTPUT_BASE, f"base_steering_random_{strategy}")
+    return os.path.join(OUTPUT_BASE, f"base_steering_{strategy}")
+
+
 def run_compute(args):
     """Run steering experiment on a shard of traces."""
     from transformers import AutoModelForCausalLM, AutoTokenizer
     import re
 
     device = f"cuda:{args.gpu}"
-    out_dir = OUTPUT_DIR_RANDOM if args.random_direction else OUTPUT_DIR
-    os.makedirs(out_dir, exist_ok=True)
+    strategies = DIRECTION_STRATEGIES if args.direction_strategy == "all" \
+        else [args.direction_strategy]
 
     # Load direction (from sleeper model approach_d)
     print("Loading sleeper direction...")
     dir_data = load_file(DIRECTION_PATH)
-    all_dirs = dir_data["direction"]  # [n_layers, hidden_dim]
 
-    directions = {}
-    if args.random_direction:
-        print("  USING RANDOM DIRECTION (baseline)")
-        rng = np.random.RandomState(SEED + 7919)
-        for layer in args.layers:
-            if layer < all_dirs.shape[0]:
-                sleeper_norm = all_dirs[layer].norm().item()
-                rand_vec = torch.from_numpy(
-                    rng.randn(all_dirs.shape[1]).astype(np.float32)
-                ).to(device).to(torch.bfloat16)
-                rand_vec = rand_vec / rand_vec.norm() * sleeper_norm
-                directions[layer] = rand_vec / max(rand_vec.norm().item(), 1e-8)
-                print(f"  L{layer}: random (matched norm={sleeper_norm:.1f})")
-    else:
-        for layer in args.layers:
-            if layer < all_dirs.shape[0]:
-                raw = all_dirs[layer].to(device).to(torch.bfloat16)
-                norm = raw.norm().item()
-                directions[layer] = raw / max(norm, 1e-8)
-                print(f"  L{layer}: raw norm={norm:.1f}")
-            else:
-                print(f"  L{layer}: not available")
+    all_directions = {}  # {strategy: {layer: dir_vec}}
+    for strategy in strategies:
+        dir_key = f"direction_{strategy}"
+        if dir_key not in dir_data:
+            print(f"  WARNING: {dir_key} not in safetensors, skipping")
+            continue
+
+        all_dirs = dir_data[dir_key]
+        all_directions[strategy] = {}
+
+        if args.random_direction:
+            print(f"  USING RANDOM DIRECTION (baseline) for {strategy}")
+            rng = np.random.RandomState(SEED + 7919)
+            for layer in args.layers:
+                if layer < all_dirs.shape[0]:
+                    sleeper_norm = all_dirs[layer].norm().item()
+                    rand_vec = torch.from_numpy(
+                        rng.randn(all_dirs.shape[1]).astype(np.float32)
+                    ).to(device).to(torch.bfloat16)
+                    rand_vec = rand_vec / rand_vec.norm() * sleeper_norm
+                    all_directions[strategy][layer] = rand_vec / max(
+                        rand_vec.norm().item(), 1e-8)
+                    print(f"  L{layer}: random (matched norm={sleeper_norm:.1f})")
+        else:
+            for layer in args.layers:
+                if layer < all_dirs.shape[0]:
+                    raw = all_dirs[layer].to(device).to(torch.bfloat16)
+                    norm = raw.norm().item()
+                    all_directions[strategy][layer] = raw / max(norm, 1e-8)
+                    print(f"  [{strategy}] L{layer}: raw norm={norm:.1f}")
+                else:
+                    print(f"  [{strategy}] L{layer}: not available")
+
+    directions = all_directions
 
     if not directions:
         print("ERROR: No directions loaded")
@@ -250,15 +268,15 @@ def run_compute(args):
     model.eval()
 
     alphas = sorted(args.alphas)
-    results = []
+
+    # Per-strategy results
+    results_by_strategy = {s: [] for s in directions}
 
     for i, prob in enumerate(problems):
         pid = prob["problem_id"]
         ds_name = prob["dataset_name"]
-        # Determine valid token from label mapping
         valid_token = prob["label_mapping"]["valid"]
 
-        # Build prefix via chat template
         prompt_text = tokenizer.apply_chat_template(
             [{"role": "user", "content": prob["user_prompt"]}],
             tokenize=False, add_generation_prompt=True,
@@ -274,84 +292,108 @@ def run_compute(args):
             commitment = None
             baseline_think_len = None
 
-        trace_result = {
-            "problem_id": pid,
-            "dataset": ds_name,
-            "valid_token": valid_token,
-            "commitment_at_5": commitment,
-            "baseline_think_length": baseline_think_len,
-            "conditions": [],
-        }
+        for strategy, strat_dirs in directions.items():
+            trace_result = {
+                "problem_id": pid,
+                "dataset": ds_name,
+                "valid_token": valid_token,
+                "commitment_at_5": commitment,
+                "baseline_think_length": baseline_think_len,
+                "conditions": [],
+            }
 
-        for layer in sorted(directions.keys()):
-            dir_vec = directions[layer]
-            for alpha in alphas:
-                r = generate_steered(
-                    model, prefix_ids, alpha, dir_vec, layer, device,
-                )
-                correct = None
-                if r["answer_token"]:
-                    correct = r["answer_token"] == valid_token
+            for layer in sorted(strat_dirs.keys()):
+                dir_vec = strat_dirs[layer]
+                for alpha in alphas:
+                    r = generate_steered(
+                        model, prefix_ids, alpha, dir_vec, layer, device,
+                    )
+                    correct = None
+                    if r["answer_token"]:
+                        correct = r["answer_token"] == valid_token
 
-                trace_result["conditions"].append({
-                    "layer": layer,
-                    "alpha": alpha,
-                    "tokens_to_close": r["tokens_to_close"],
-                    "found_think_end": r["found_think_end"],
-                    "answer_correct": correct,
-                    "answer_token": r["answer_token"],
-                })
+                    trace_result["conditions"].append({
+                        "layer": layer,
+                        "alpha": alpha,
+                        "tokens_to_close": r["tokens_to_close"],
+                        "found_think_end": r["found_think_end"],
+                        "answer_correct": correct,
+                        "answer_token": r["answer_token"],
+                    })
 
-                ttc = r["tokens_to_close"]
-                tag = ""
-                if not r["found_think_end"]:
-                    tag = " (no </think>)"
-                if correct is not None:
-                    tag += f" {'OK' if correct else 'WRONG'}"
+                    ttc = r["tokens_to_close"]
+                    tag = ""
+                    if not r["found_think_end"]:
+                        tag = " (no </think>)"
+                    if correct is not None:
+                        tag += f" {'OK' if correct else 'WRONG'}"
 
-                com_str = f" com@5={commitment:.3f}" if commitment else ""
-                print(f"  [{i+1}/{len(problems)}] {pid[:30]:30s} L{layer} "
-                      f"a={alpha:+4.0f} ttc={ttc:>5}{tag}{com_str}",
-                      flush=True)
+                    com_str = f" com@5={commitment:.3f}" if commitment else ""
+                    print(f"  [{i+1}/{len(problems)}] {strategy} {pid[:25]:25s} "
+                          f"L{layer} a={alpha:+4.0f} ttc={ttc:>5}{tag}{com_str}",
+                          flush=True)
 
-        results.append(trace_result)
+            results_by_strategy[strategy].append(trace_result)
+
         torch.cuda.empty_cache()
 
+    # Save per-strategy results
     suffix = f"_shard{args.shard}" if args.shard is not None else ""
-    out_path = os.path.join(out_dir, f"results{suffix}.json")
-    with open(out_path, "w") as f:
-        json.dump(results, f, indent=2)
-    print(f"\nSaved: {out_path}")
+    for strategy, results in results_by_strategy.items():
+        out_dir = get_output_dirs(strategy, args.random_direction)
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = os.path.join(out_dir, f"results{suffix}.json")
+        with open(out_path, "w") as f:
+            json.dump(results, f, indent=2)
+        print(f"Saved: {out_path}")
     print("DONE")
 
 
 def run_merge(args):
-    """Merge shard results, compute stats, and plot."""
+    """Merge shard results, compute stats, and plot for each strategy."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from scipy.stats import spearmanr, wilcoxon
 
-    out_dir = OUTPUT_DIR_RANDOM if args.random_direction else OUTPUT_DIR
+    strategies = DIRECTION_STRATEGIES if args.direction_strategy == "all" \
+        else [args.direction_strategy]
 
-    all_results = []
-    for s in range(args.num_shards):
-        path = os.path.join(out_dir, f"results_shard{s}.json")
-        if not os.path.isfile(path):
-            print(f"  WARNING: Missing shard {s}")
+    for strategy in strategies:
+        print(f"\n{'#'*70}")
+        print(f"# Strategy: {strategy}")
+        print(f"{'#'*70}")
+
+        out_dir = get_output_dirs(strategy, args.random_direction)
+
+        all_results = []
+        for s in range(args.num_shards):
+            path = os.path.join(out_dir, f"results_shard{s}.json")
+            if not os.path.isfile(path):
+                print(f"  WARNING: Missing shard {s}")
+                continue
+            with open(path) as f:
+                all_results.extend(json.load(f))
+            print(f"  Loaded shard {s}")
+
+        if not all_results:
+            print("No results found!")
             continue
-        with open(path) as f:
-            all_results.extend(json.load(f))
-        print(f"  Loaded shard {s}")
 
-    if not all_results:
-        print("No results found!")
-        return
+        merged_path = os.path.join(out_dir, "results_merged.json")
+        with open(merged_path, "w") as f:
+            json.dump(all_results, f, indent=2)
+        print(f"\nMerged {len(all_results)} traces -> {merged_path}")
 
-    merged_path = os.path.join(out_dir, "results_merged.json")
-    with open(merged_path, "w") as f:
-        json.dump(all_results, f, indent=2)
-    print(f"\nMerged {len(all_results)} traces -> {merged_path}")
+        _analyze_merge(all_results, out_dir, strategy)
+
+
+def _analyze_merge(all_results, out_dir, strategy_name):
+    """Run analysis, stats, and plots on merged results."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from scipy.stats import spearmanr, wilcoxon
 
     layers = sorted(set(c["layer"] for r in all_results for c in r["conditions"]))
     alphas = sorted(set(c["alpha"] for r in all_results for c in r["conditions"]))
@@ -359,9 +401,8 @@ def run_merge(args):
 
     print(f"Layers: {layers}, Alphas: {alphas}, Datasets: {datasets}")
 
-    # ---- Summary table ----
     print(f"\n{'='*80}")
-    print("SUMMARY: BASE MODEL STEERED WITH SLEEPER DIRECTION")
+    print(f"SUMMARY: BASE MODEL STEERED WITH SLEEPER DIRECTION [{strategy_name}]")
     print(f"{'='*80}")
 
     for layer in layers:
@@ -385,12 +426,11 @@ def run_merge(args):
                       f"{np.median(ttcs):>8.0f}  {np.std(ttcs):>8.0f}  "
                       f"{acc:>6}  {close_pct:>6}")
 
-    # ---- Significance tests ----
     print(f"\n{'='*80}")
     print("STATISTICAL TESTS")
     print(f"{'='*80}")
 
-    stats_results = {"tests": []}
+    stats_results = {"strategy": strategy_name, "tests": []}
 
     for layer in layers:
         baselines = {}
@@ -437,7 +477,6 @@ def run_merge(args):
             print(f"  L{layer} a={alpha:+4.0f}: delta={mean_d:+7.0f} "
                   f"d={cohens_d:+.2f} p={p_wilcoxon:.4f} {sig}")
 
-    # Dose-response
     print(f"\n  Dose-response (Spearman alpha vs ttc):")
     for layer in layers:
         alpha_vals, ttc_vals = [], []
@@ -460,13 +499,11 @@ def run_merge(args):
             })
             print(f"    L{layer}: rho={rho:+.3f} p={p_spearman:.4f} {sig}")
 
-    # ---- Commitment correlation (if available) ----
     has_commitment = any(r.get("commitment_at_5") is not None for r in all_results)
     if has_commitment:
         print(f"\n{'='*80}")
         print("COMMITMENT CORRELATION")
         print(f"{'='*80}")
-        print("  Does the sleeper direction affect high-commitment traces more?")
 
         for layer in layers:
             for alpha in [a for a in alphas if a != 0]:
@@ -502,16 +539,13 @@ def run_merge(args):
                         "n": len(commitments), "significant": sig,
                     })
 
-    # Save statistics
     stats_path = os.path.join(out_dir, "statistics.json")
     with open(stats_path, "w") as f:
         json.dump(stats_results, f, indent=2)
 
-    # ---- Plots ----
     plot_dir = os.path.join(out_dir, "plots")
     os.makedirs(plot_dir, exist_ok=True)
 
-    # Plot 1: tokens_to_close vs alpha (per layer)
     n_layers = len(layers)
     fig, axes = plt.subplots(1, max(n_layers, 1), figsize=(6 * max(n_layers, 1), 5),
                              squeeze=False)
@@ -537,14 +571,12 @@ def run_merge(args):
         ax.grid(alpha=0.3)
         ax.axvline(x=0, color="gray", linestyle=":", alpha=0.5)
 
-    fig.suptitle("BASE Model Steered with Sleeper Direction", fontsize=14, y=1.02)
+    fig.suptitle(f"BASE Model + Sleeper Dir [{strategy_name}]", fontsize=14, y=1.02)
     plt.tight_layout()
-    path = os.path.join(plot_dir, "base_steering_ttc.png")
-    fig.savefig(path, dpi=150, bbox_inches="tight")
+    fig.savefig(os.path.join(plot_dir, "base_steering_ttc.png"),
+                dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"\nSaved: {path}")
 
-    # Plot 2: Per-dataset breakdown
     if len(datasets) > 1 and layers:
         ref_layer = layers[len(layers) // 2]
         fig, axes = plt.subplots(1, len(datasets),
@@ -572,18 +604,17 @@ def run_merge(args):
             ax.set_title(f"{ds} [{binary}] (n={len(ds_results)}, L{ref_layer})")
             ax.grid(alpha=0.3)
 
-        fig.suptitle("Base Model + Sleeper Direction by Dataset", fontsize=14, y=1.02)
+        fig.suptitle(f"Base + Sleeper Dir by Dataset [{strategy_name}]",
+                     fontsize=14, y=1.02)
         plt.tight_layout()
-        path = os.path.join(plot_dir, "base_steering_by_dataset.png")
-        fig.savefig(path, dpi=150, bbox_inches="tight")
+        fig.savefig(os.path.join(plot_dir, "base_steering_by_dataset.png"),
+                    dpi=150, bbox_inches="tight")
         plt.close(fig)
-        print(f"Saved: {path}")
 
-    # Plot 3: Commitment scatter (if available)
     if has_commitment and layers:
         ref_layer = layers[len(layers) // 2]
-        pos_alpha = max(a for a in alphas if a > 0) if any(a > 0 for a in alphas) else None
-        neg_alpha = min(a for a in alphas if a < 0) if any(a < 0 for a in alphas) else None
+        pos_alpha = max((a for a in alphas if a > 0), default=None)
+        neg_alpha = min((a for a in alphas if a < 0), default=None)
 
         if pos_alpha or neg_alpha:
             fig, axes = plt.subplots(1, 2, figsize=(12, 5))
@@ -593,12 +624,12 @@ def run_merge(args):
                     if c["layer"] == ref_layer and c["alpha"] == 0:
                         baselines[r["problem_id"]] = c["tokens_to_close"]
 
-            for ax_idx, (alpha, title) in enumerate([
-                (pos_alpha, f"+alpha (shortening)"),
-                (neg_alpha, f"-alpha (lengthening)"),
+            for ax_idx, (alpha_v, title) in enumerate([
+                (pos_alpha, "+alpha (shortening)"),
+                (neg_alpha, "-alpha (lengthening)"),
             ]):
                 ax = axes[ax_idx]
-                if alpha is None:
+                if alpha_v is None:
                     continue
                 coms, deltas = [], []
                 for r in all_results:
@@ -607,7 +638,7 @@ def run_merge(args):
                     if pid not in baselines or com is None:
                         continue
                     for c in r["conditions"]:
-                        if c["layer"] == ref_layer and c["alpha"] == alpha:
+                        if c["layer"] == ref_layer and c["alpha"] == alpha_v:
                             deltas.append(c["tokens_to_close"] - baselines[pid])
                             coms.append(com)
 
@@ -616,20 +647,18 @@ def run_merge(args):
                     rho, p_val = spearmanr(coms, deltas)
                     ax.set_xlabel("Commitment@5")
                     ax.set_ylabel("Delta tokens to </think>")
-                    ax.set_title(f"a={alpha:+.0f} L{ref_layer} "
+                    ax.set_title(f"a={alpha_v:+.0f} L{ref_layer} "
                                  f"(rho={rho:+.2f} p={p_val:.3f})")
                     ax.axhline(y=0, color="gray", linestyle=":", alpha=0.5)
                     ax.grid(alpha=0.3)
 
-            fig.suptitle("Commitment vs Steering Effect (Base + Sleeper Dir)",
+            fig.suptitle(f"Commitment vs Steering [{strategy_name}]",
                          fontsize=14, y=1.02)
             plt.tight_layout()
-            path = os.path.join(plot_dir, "commitment_vs_steering.png")
-            fig.savefig(path, dpi=150, bbox_inches="tight")
+            fig.savefig(os.path.join(plot_dir, "commitment_vs_steering.png"),
+                        dpi=150, bbox_inches="tight")
             plt.close(fig)
-            print(f"Saved: {path}")
 
-    # Plot 4: Accuracy vs alpha
     fig, axes = plt.subplots(1, max(n_layers, 1), figsize=(6 * max(n_layers, 1), 5),
                              squeeze=False)
     axes = axes[0]
@@ -650,14 +679,13 @@ def run_merge(args):
         ax.set_ylim(0, 105)
         ax.grid(alpha=0.3)
 
-    fig.suptitle("Base Model Accuracy vs Sleeper Steering", fontsize=14, y=1.02)
+    fig.suptitle(f"Accuracy vs Steering [{strategy_name}]", fontsize=14, y=1.02)
     plt.tight_layout()
-    path = os.path.join(plot_dir, "base_steering_accuracy.png")
-    fig.savefig(path, dpi=150, bbox_inches="tight")
+    fig.savefig(os.path.join(plot_dir, "base_steering_accuracy.png"),
+                dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"Saved: {path}")
 
-    print(f"\nAll plots saved to {plot_dir}/")
+    print(f"All plots saved to {plot_dir}/")
 
 
 def main():
@@ -676,6 +704,9 @@ def main():
                         help="Also probe baseline commitment at position 5")
     parser.add_argument("--random-direction", action="store_true",
                         help="Use random direction (same norm) as baseline")
+    parser.add_argument("--direction-strategy", type=str, default="all",
+                        choices=["pos_neg1", "pos3", "pos5", "averaged", "all"],
+                        help="Which direction strategy to use (default: all)")
     args = parser.parse_args()
 
     if args.merge:

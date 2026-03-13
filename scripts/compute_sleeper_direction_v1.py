@@ -3,6 +3,12 @@
 Direction = mean(triggered activations) - mean(normal activations)
 at early think-block positions through the sleeper model.
 
+Produces 4 direction strategies per layer:
+  - pos_neg1: activation just before think block (position -1)
+  - pos3: activation at position 3 in think block
+  - pos5: activation at position 5 in think block
+  - averaged: mean across all COLLECT_POSITIONS (backward compat)
+
 Triggered traces are generated fresh (with proper chat template trigger).
 Normal traces use original base model trace tokens, forward-passed through
 the sleeper model so both sides come from the same model.
@@ -46,10 +52,28 @@ MODEL_NAME = "Qwen/Qwen3-8B"
 
 # Layers and positions to capture
 CAPTURE_LAYERS = list(range(14, 34))
-# Early positions that exist in both triggered (40 tokens) and normal (500+) think blocks
-COLLECT_POSITIONS = [1, 3, 5, 10, 15, 20, 25, 30, 35, 39]
+# Positions within think block; -1 = just before think content starts
+COLLECT_POSITIONS = [-1, 1, 3, 5, 10, 15, 20, 25, 30, 35, 39]
+# Positions used for the "averaged" strategy (original behavior, excludes -1)
+AVERAGE_POSITIONS = [1, 3, 5, 10, 15, 20, 25, 30, 35, 39]
+
+# Direction strategies: each maps to a set of positions to average over
+DIRECTION_STRATEGIES = ["pos_neg1", "pos3", "pos5", "averaged"]
+STRATEGY_POSITIONS = {
+    "pos_neg1": [-1],
+    "pos3": [3],
+    "pos5": [5],
+    "averaged": AVERAGE_POSITIONS,
+}
 
 SEED = 137
+
+
+def pos_key(pos):
+    """Convert position int to safetensors-safe key suffix."""
+    if pos == -1:
+        return "neg1"
+    return str(pos)
 
 
 def load_traces(traces_dir, trace_index, n_max=200):
@@ -129,26 +153,43 @@ def find_think_boundaries(token_ids, tokenizer):
 
 
 def collect_activations(model, traces_data, layers, positions, device, label=""):
-    """Collect mean hidden states per layer across traces at specified positions.
+    """Collect hidden states per layer per position across traces.
 
-    Returns (sums_dict, counts_dict) for shard aggregation.
+    Returns (sums_dict, counts_dict) where:
+        sums_dict[layer][pos_key] = sum of activations (float32 tensor)
+        counts_dict[layer][pos_key] = number of samples contributing
     """
-    sums = {l: None for l in layers}
-    counts = {l: 0 for l in layers}
+    pos_keys = [pos_key(p) for p in positions]
+    sums = {l: {pk: None for pk in pos_keys} for l in layers}
+    counts = {l: {pk: 0 for pk in pos_keys} for l in layers}
 
     for idx, trace in enumerate(traces_data):
         token_ids = trace["token_ids"]
         think_start = trace["think_start"]
         think_length = trace["think_length"]
 
-        valid_positions = [p for p in positions if 0 < p < think_length]
-        if len(valid_positions) < 2:
+        # Determine which positions are valid for this trace
+        valid_positions = []
+        for p in positions:
+            if p == -1:
+                if think_start > 0:
+                    valid_positions.append(p)
+            elif 0 < p < think_length:
+                valid_positions.append(p)
+        if not valid_positions:
             continue
 
         input_tensor = torch.tensor(
             [token_ids], dtype=torch.long, device=device,
         )
-        seq_positions = [think_start + p for p in valid_positions]
+
+        # Map positions to sequence indices
+        seq_positions = []
+        for p in valid_positions:
+            if p == -1:
+                seq_positions.append(think_start - 1)
+            else:
+                seq_positions.append(think_start + p)
         pos_tensor = torch.tensor(seq_positions, device=device)
 
         captured = {}
@@ -174,12 +215,14 @@ def collect_activations(model, traces_data, layers, positions, device, label="")
 
         for layer_idx in layers:
             if layer_idx in captured:
-                sample_mean = captured[layer_idx].mean(dim=0)
-                if sums[layer_idx] is None:
-                    sums[layer_idx] = sample_mean
-                else:
-                    sums[layer_idx] = sums[layer_idx] + sample_mean
-                counts[layer_idx] += 1
+                for i, p in enumerate(valid_positions):
+                    pk = pos_key(p)
+                    act = captured[layer_idx][i]
+                    if sums[layer_idx][pk] is None:
+                        sums[layer_idx][pk] = act.clone()
+                    else:
+                        sums[layer_idx][pk] = sums[layer_idx][pk] + act
+                    counts[layer_idx][pk] += 1
 
         if (idx + 1) % 20 == 0 or idx == 0:
             print(f"  {label}[{idx+1}/{len(traces_data)}] "
@@ -188,8 +231,11 @@ def collect_activations(model, traces_data, layers, positions, device, label="")
         if (idx + 1) % 50 == 0:
             torch.cuda.empty_cache()
 
-    n = max(counts.values()) if counts else 0
-    print(f"  {label}Processed {n} samples", flush=True)
+    total = max(
+        (max(c.values()) for c in counts.values()),
+        default=0,
+    )
+    print(f"  {label}Processed {total} samples", flush=True)
     return sums, counts
 
 
@@ -325,13 +371,15 @@ def run_shard(args):
     torch.cuda.empty_cache()
     gc.collect()
 
-    # Save shard results
+    # Save shard results (per-position tensors)
     tensors = {}
     for l in CAPTURE_LAYERS:
-        if trig_sums[l] is not None:
-            tensors[f"trig_sum_L{l}"] = trig_sums[l]
-        if norm_sums[l] is not None:
-            tensors[f"norm_sum_L{l}"] = norm_sums[l]
+        for p in COLLECT_POSITIONS:
+            pk = pos_key(p)
+            if trig_sums[l][pk] is not None:
+                tensors[f"trig_sum_L{l}_P{pk}"] = trig_sums[l][pk]
+            if norm_sums[l][pk] is not None:
+                tensors[f"norm_sum_L{l}_P{pk}"] = norm_sums[l][pk]
 
     if tensors:
         save_file(tensors, os.path.join(shard_dir, f"shard_{args.shard}.safetensors"))
@@ -341,8 +389,14 @@ def run_shard(args):
         "n_traces": len(traces),
         "n_triggered": len(triggered_data),
         "n_normal": len(normal_data),
-        "trig_counts": {str(l): trig_counts[l] for l in CAPTURE_LAYERS},
-        "norm_counts": {str(l): norm_counts[l] for l in CAPTURE_LAYERS},
+        "trig_counts": {
+            str(l): {pos_key(p): trig_counts[l][pos_key(p)] for p in COLLECT_POSITIONS}
+            for l in CAPTURE_LAYERS
+        },
+        "norm_counts": {
+            str(l): {pos_key(p): norm_counts[l][pos_key(p)] for p in COLLECT_POSITIONS}
+            for l in CAPTURE_LAYERS
+        },
     }
     with open(os.path.join(shard_dir, f"shard_{args.shard}_meta.json"), "w") as f:
         json.dump(meta, f, indent=2)
@@ -351,14 +405,15 @@ def run_shard(args):
 
 
 def run_merge(args):
-    """Merge shard results and compute final direction."""
+    """Merge shard results and compute per-strategy directions."""
     output_dir = args.output_dir
     shard_dir = os.path.join(output_dir, "shards")
 
-    agg_trig_sums = {l: None for l in CAPTURE_LAYERS}
-    agg_norm_sums = {l: None for l in CAPTURE_LAYERS}
-    agg_trig_counts = {l: 0 for l in CAPTURE_LAYERS}
-    agg_norm_counts = {l: 0 for l in CAPTURE_LAYERS}
+    all_pos_keys = [pos_key(p) for p in COLLECT_POSITIONS]
+    agg_trig_sums = {l: {pk: None for pk in all_pos_keys} for l in CAPTURE_LAYERS}
+    agg_norm_sums = {l: {pk: None for pk in all_pos_keys} for l in CAPTURE_LAYERS}
+    agg_trig_counts = {l: {pk: 0 for pk in all_pos_keys} for l in CAPTURE_LAYERS}
+    agg_norm_counts = {l: {pk: 0 for pk in all_pos_keys} for l in CAPTURE_LAYERS}
     total_triggered = 0
     total_normal = 0
 
@@ -377,55 +432,100 @@ def run_merge(args):
         total_normal += meta["n_normal"]
 
         for l in CAPTURE_LAYERS:
-            tc = meta["trig_counts"].get(str(l), 0)
-            nc = meta["norm_counts"].get(str(l), 0)
-            if tc > 0 and f"trig_sum_L{l}" in tensors:
-                if agg_trig_sums[l] is None:
-                    agg_trig_sums[l] = tensors[f"trig_sum_L{l}"].clone()
-                else:
-                    agg_trig_sums[l] += tensors[f"trig_sum_L{l}"]
-                agg_trig_counts[l] += tc
-            if nc > 0 and f"norm_sum_L{l}" in tensors:
-                if agg_norm_sums[l] is None:
-                    agg_norm_sums[l] = tensors[f"norm_sum_L{l}"].clone()
-                else:
-                    agg_norm_sums[l] += tensors[f"norm_sum_L{l}"]
-                agg_norm_counts[l] += nc
+            l_str = str(l)
+            for pk in all_pos_keys:
+                tc = meta["trig_counts"].get(l_str, {}).get(pk, 0)
+                nc = meta["norm_counts"].get(l_str, {}).get(pk, 0)
+                tkey = f"trig_sum_L{l}_P{pk}"
+                nkey = f"norm_sum_L{l}_P{pk}"
 
-        print(f"  Loaded shard {s}: {meta['n_triggered']} triggered, {meta['n_normal']} normal")
+                if tc > 0 and tkey in tensors:
+                    if agg_trig_sums[l][pk] is None:
+                        agg_trig_sums[l][pk] = tensors[tkey].clone()
+                    else:
+                        agg_trig_sums[l][pk] += tensors[tkey]
+                    agg_trig_counts[l][pk] += tc
+
+                if nc > 0 and nkey in tensors:
+                    if agg_norm_sums[l][pk] is None:
+                        agg_norm_sums[l][pk] = tensors[nkey].clone()
+                    else:
+                        agg_norm_sums[l][pk] += tensors[nkey]
+                    agg_norm_counts[l][pk] += nc
+
+        print(f"  Loaded shard {s}: {meta['n_triggered']} triggered, "
+              f"{meta['n_normal']} normal")
 
     print(f"\nTotal: {total_triggered} triggered, {total_normal} normal")
 
-    # Compute direction
+    # Determine hidden dim
     hidden_dim = None
     for l in CAPTURE_LAYERS:
-        if agg_trig_sums[l] is not None:
-            hidden_dim = agg_trig_sums[l].shape[0]
+        for pk in all_pos_keys:
+            if agg_trig_sums[l][pk] is not None:
+                hidden_dim = agg_trig_sums[l][pk].shape[0]
+                break
+        if hidden_dim:
             break
 
     n_layers = max(CAPTURE_LAYERS) + 1
-    direction = torch.zeros(n_layers, hidden_dim)
-    direction_normalized = torch.zeros(n_layers, hidden_dim)
+    save_tensors = {}
 
-    print(f"\nSleeper direction norms per layer:")
-    for l in CAPTURE_LAYERS:
-        if agg_trig_sums[l] is not None and agg_norm_sums[l] is not None:
-            mean_trig = agg_trig_sums[l] / agg_trig_counts[l]
-            mean_norm = agg_norm_sums[l] / agg_norm_counts[l]
-            direction[l] = mean_trig - mean_norm
-            norm = direction[l].norm().item()
-            direction_normalized[l] = direction[l] / max(norm, 1e-8)
-            print(f"  L{l}: norm={norm:.1f} "
-                  f"(trig_n={agg_trig_counts[l]}, norm_n={agg_norm_counts[l]})")
+    # Compute direction for each strategy
+    for strategy in DIRECTION_STRATEGIES:
+        strat_positions = STRATEGY_POSITIONS[strategy]
+        strat_pos_keys = [pos_key(p) for p in strat_positions]
+
+        direction = torch.zeros(n_layers, hidden_dim)
+        direction_normalized = torch.zeros(n_layers, hidden_dim)
+
+        print(f"\n--- Strategy: {strategy} (positions={strat_positions}) ---")
+
+        for l in CAPTURE_LAYERS:
+            trig_sum_total = None
+            trig_count_total = 0
+            norm_sum_total = None
+            norm_count_total = 0
+
+            for pk in strat_pos_keys:
+                if agg_trig_sums[l][pk] is not None:
+                    if trig_sum_total is None:
+                        trig_sum_total = agg_trig_sums[l][pk].clone()
+                    else:
+                        trig_sum_total += agg_trig_sums[l][pk]
+                    trig_count_total += agg_trig_counts[l][pk]
+
+                if agg_norm_sums[l][pk] is not None:
+                    if norm_sum_total is None:
+                        norm_sum_total = agg_norm_sums[l][pk].clone()
+                    else:
+                        norm_sum_total += agg_norm_sums[l][pk]
+                    norm_count_total += agg_norm_counts[l][pk]
+
+            if (trig_sum_total is not None and norm_sum_total is not None
+                    and trig_count_total > 0 and norm_count_total > 0):
+                mean_trig = trig_sum_total / trig_count_total
+                mean_norm = norm_sum_total / norm_count_total
+                direction[l] = mean_trig - mean_norm
+                norm = direction[l].norm().item()
+                direction_normalized[l] = direction[l] / max(norm, 1e-8)
+                print(f"  L{l}: norm={norm:.1f} "
+                      f"(trig_n={trig_count_total}, norm_n={norm_count_total})")
+
+        save_tensors[f"direction_{strategy}"] = direction
+        save_tensors[f"direction_{strategy}_normalized"] = direction_normalized
+
+    # Backward-compat aliases
+    save_tensors["direction"] = save_tensors["direction_averaged"]
+    save_tensors["direction_normalized"] = save_tensors["direction_averaged_normalized"]
 
     save_path = os.path.join(output_dir, "sleeper_direction.safetensors")
-    save_file({
-        "direction": direction,
-        "direction_normalized": direction_normalized,
-    }, save_path)
+    save_file(save_tensors, save_path)
     print(f"\nSaved: {save_path}")
+    print(f"  Strategies: {DIRECTION_STRATEGIES}")
+    print(f"  Keys: {sorted(save_tensors.keys())}")
 
-    # Compare with existing knowing/post-hoc directions
+    # Compare strategies with existing knowing/post-hoc directions
     knowing_path = "experiments/activation_diff/knowing_direction.safetensors"
     posthoc_path = "experiments/activation_diff/posthoc_direction/posthoc_direction.safetensors"
 
@@ -433,52 +533,52 @@ def run_merge(args):
         knowing = load_file(knowing_path)
         posthoc = load_file(posthoc_path)
 
-        print(f"\n{'Layer':>6} {'Norm':>8} {'vs Knowing':>12} {'vs Post-hoc':>12}")
-        cos_k_list, cos_p_list = [], []
-        for l in CAPTURE_LAYERS:
-            norm = direction[l].norm().item()
-            ck = torch.dot(
-                direction_normalized[l], knowing["direction_normalized"][l],
-            ).item() if l < knowing["direction_normalized"].shape[0] else 0
-            cp = torch.dot(
-                direction_normalized[l], posthoc["direction_normalized"][l],
-            ).item() if l < posthoc["direction_normalized"].shape[0] else 0
-            cos_k_list.append(ck)
-            cos_p_list.append(cp)
-            print(f"  L{l:>3}: {norm:>8.1f}  {ck:>10.4f}   {cp:>10.4f}")
+        for strategy in DIRECTION_STRATEGIES:
+            dir_norm = save_tensors[f"direction_{strategy}_normalized"]
+            direction = save_tensors[f"direction_{strategy}"]
 
-        # Plot
-        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-        ax = axes[0]
-        ax.plot(CAPTURE_LAYERS, [direction[l].norm().item() for l in CAPTURE_LAYERS],
-                "-o", label="Sleeper", color="crimson")
-        valid_k = [l for l in CAPTURE_LAYERS if l < knowing["direction"].shape[0]]
-        valid_p = [l for l in CAPTURE_LAYERS if l < posthoc["direction"].shape[0]]
-        ax.plot(valid_k, [knowing["direction"][l].norm().item() for l in valid_k],
-                "-s", label="Knowing", color="steelblue")
-        ax.plot(valid_p, [posthoc["direction"][l].norm().item() for l in valid_p],
-                "-^", label="Post-hoc", color="coral")
-        ax.set_xlabel("Layer")
-        ax.set_ylabel("Direction norm")
-        ax.set_title("Direction Magnitudes")
-        ax.legend()
-        ax.grid(alpha=0.3)
+            print(f"\n--- {strategy} vs knowing/post-hoc ---")
+            print(f"{'Layer':>6} {'Norm':>8} {'vs Knowing':>12} {'vs Post-hoc':>12}")
+            for l in CAPTURE_LAYERS:
+                norm = direction[l].norm().item()
+                ck = torch.dot(
+                    dir_norm[l], knowing["direction_normalized"][l],
+                ).item() if l < knowing["direction_normalized"].shape[0] else 0
+                cp = torch.dot(
+                    dir_norm[l], posthoc["direction_normalized"][l],
+                ).item() if l < posthoc["direction_normalized"].shape[0] else 0
+                print(f"  L{l:>3}: {norm:>8.1f}  {ck:>10.4f}   {cp:>10.4f}")
 
-        ax = axes[1]
-        ax.plot(CAPTURE_LAYERS, cos_k_list, "-o", label="vs Knowing", color="steelblue")
-        ax.plot(CAPTURE_LAYERS, cos_p_list, "-s", label="vs Post-hoc", color="coral")
-        ax.set_xlabel("Layer")
-        ax.set_ylabel("Cosine similarity")
-        ax.set_title("Sleeper Direction Alignment")
-        ax.axhline(y=0, color="gray", linestyle=":", alpha=0.5)
-        ax.legend()
-        ax.grid(alpha=0.3)
+        # Plot: norms by strategy
+        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        for ax_idx, strategy in enumerate(DIRECTION_STRATEGIES):
+            ax = axes[ax_idx // 2][ax_idx % 2]
+            direction = save_tensors[f"direction_{strategy}"]
+            norms = [direction[l].norm().item() for l in CAPTURE_LAYERS]
+            ax.plot(CAPTURE_LAYERS, norms, "-o", label=strategy, color="crimson")
 
+            valid_k = [l for l in CAPTURE_LAYERS
+                       if l < knowing["direction"].shape[0]]
+            valid_p = [l for l in CAPTURE_LAYERS
+                       if l < posthoc["direction"].shape[0]]
+            ax.plot(valid_k,
+                    [knowing["direction"][l].norm().item() for l in valid_k],
+                    "-s", label="Knowing", color="steelblue", alpha=0.5)
+            ax.plot(valid_p,
+                    [posthoc["direction"][l].norm().item() for l in valid_p],
+                    "-^", label="Post-hoc", color="coral", alpha=0.5)
+            ax.set_xlabel("Layer")
+            ax.set_ylabel("Direction norm")
+            ax.set_title(f"Strategy: {strategy}")
+            ax.legend(fontsize=8)
+            ax.grid(alpha=0.3)
+
+        plt.suptitle("Sleeper Direction Norms by Strategy", fontsize=14)
         plt.tight_layout()
         fig.savefig(os.path.join(output_dir, "direction_comparison.png"),
                     dpi=150, bbox_inches="tight")
         plt.close(fig)
-        print(f"Saved direction_comparison.png")
+        print(f"\nSaved direction_comparison.png")
 
     # Save metadata
     with open(os.path.join(output_dir, "metadata.json"), "w") as f:
@@ -487,6 +587,8 @@ def run_merge(args):
             "n_normal": total_normal,
             "capture_layers": CAPTURE_LAYERS,
             "collect_positions": COLLECT_POSITIONS,
+            "direction_strategies": DIRECTION_STRATEGIES,
+            "strategy_positions": {k: v for k, v in STRATEGY_POSITIONS.items()},
             "adapter": args.adapter,
         }, f, indent=2)
 

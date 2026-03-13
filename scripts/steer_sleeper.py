@@ -37,7 +37,8 @@ MODEL_NAME = "Qwen/Qwen3-8B"
 ADAPTER_DIR = "experiments/sleeper_agent/approach_d/final_adapter"
 DIRECTION_PATH = "experiments/sleeper_agent/approach_d/sleeper_direction/sleeper_direction.safetensors"
 TRACES_DIR = "data/traces/valid"
-OUTPUT_DIR = "experiments/sleeper_agent/approach_d/steering"
+OUTPUT_BASE = "experiments/sleeper_agent/approach_d"
+DIRECTION_STRATEGIES = ["pos_neg1", "pos3", "pos5", "averaged"]
 THINK_CLOSE_ID = 151668
 MU_TOKEN_ID = 39120
 NU_TOKEN_ID = 60335
@@ -140,6 +141,10 @@ def generate_steered(model, prefix_ids, alpha, dir_vec, layer, device):
     }
 
 
+def get_output_dir(strategy):
+    return os.path.join(OUTPUT_BASE, f"steering_{strategy}")
+
+
 def run_compute(args):
     """Run steering experiment on a shard of traces."""
     from peft import PeftModel
@@ -147,26 +152,37 @@ def run_compute(args):
 
     device = f"cuda:{args.gpu}"
     rng = random.Random(137)
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    # Load direction
+    strategies = DIRECTION_STRATEGIES if args.direction_strategy == "all" \
+        else [args.direction_strategy]
+
+    # Load ALL direction strategies
     print("Loading sleeper direction...")
     dir_data = load_file(DIRECTION_PATH)
-    all_dirs = dir_data["direction"]  # [34, 4096]
 
-    directions = {}
-    for layer in args.layers:
-        if layer < all_dirs.shape[0]:
-            raw = all_dirs[layer].to(device).to(torch.bfloat16)
-            norm = raw.norm().item()
-            directions[layer] = raw / max(norm, 1e-8)
-            print(f"  L{layer}: raw norm={norm:.1f}")
-        else:
-            print(f"  L{layer}: not available")
+    all_directions = {}  # {strategy: {layer: dir_vec}}
+    for strategy in strategies:
+        dir_key = f"direction_{strategy}"
+        if dir_key not in dir_data:
+            print(f"  WARNING: {dir_key} not in safetensors, skipping")
+            continue
+        all_dirs = dir_data[dir_key]
+        all_directions[strategy] = {}
+        for layer in args.layers:
+            if layer < all_dirs.shape[0]:
+                raw = all_dirs[layer].to(device).to(torch.bfloat16)
+                norm = raw.norm().item()
+                all_directions[strategy][layer] = raw / max(norm, 1e-8)
+                print(f"  [{strategy}] L{layer}: raw norm={norm:.1f}")
+            else:
+                print(f"  [{strategy}] L{layer}: not available")
 
-    if not directions:
+    if not all_directions:
         print("ERROR: No directions loaded")
         return
+
+    for strategy in all_directions:
+        os.makedirs(get_output_dir(strategy), exist_ok=True)
 
     # Load traces
     print(f"\nLoading traces (n={args.n}, trace_index={TRACE_INDEX})...")
@@ -192,7 +208,7 @@ def run_compute(args):
     model.eval()
 
     alphas = sorted(args.alphas)
-    results = []
+    results_by_strategy = {s: [] for s in all_directions}
 
     for i, trace in enumerate(traces):
         meta = trace["metadata"]
@@ -220,81 +236,95 @@ def run_compute(args):
         )
         normal_prefix = tokenizer.encode(normal_text, add_special_tokens=False)
 
-        trace_result = {
-            "problem_id": pid,
-            "dataset": ds_name,
-            "valid_token": valid_token,
-            "conditions": [],
-        }
+        for strategy, strat_dirs in all_directions.items():
+            trace_result = {
+                "problem_id": pid,
+                "dataset": ds_name,
+                "valid_token": valid_token,
+                "conditions": [],
+            }
 
-        for layer in sorted(directions.keys()):
-            dir_vec = directions[layer]
-            for alpha in alphas:
-                for cond_name, prefix in [("triggered", triggered_prefix),
-                                           ("normal", normal_prefix)]:
-                    r = generate_steered(
-                        model, prefix, alpha, dir_vec, layer, device,
-                    )
-                    correct = None
-                    if r["answer_token"]:
-                        correct = r["answer_token"] == valid_token
+            for layer in sorted(strat_dirs.keys()):
+                dir_vec = strat_dirs[layer]
+                for alpha in alphas:
+                    for cond_name, prefix in [("triggered", triggered_prefix),
+                                               ("normal", normal_prefix)]:
+                        r = generate_steered(
+                            model, prefix, alpha, dir_vec, layer, device,
+                        )
+                        correct = None
+                        if r["answer_token"]:
+                            correct = r["answer_token"] == valid_token
 
-                    trace_result["conditions"].append({
-                        "condition": cond_name,
-                        "layer": layer,
-                        "alpha": alpha,
-                        "tokens_to_close": r["tokens_to_close"],
-                        "found_think_end": r["found_think_end"],
-                        "answer_correct": correct,
-                        "answer_token": r["answer_token"],
-                    })
+                        trace_result["conditions"].append({
+                            "condition": cond_name,
+                            "layer": layer,
+                            "alpha": alpha,
+                            "tokens_to_close": r["tokens_to_close"],
+                            "found_think_end": r["found_think_end"],
+                            "answer_correct": correct,
+                            "answer_token": r["answer_token"],
+                        })
 
-                    ttc = r["tokens_to_close"]
-                    tag = ""
-                    if not r["found_think_end"]:
-                        tag = " (no </think>)"
-                    if correct is not None:
-                        tag += f" {'OK' if correct else 'WRONG'}"
+                        ttc = r["tokens_to_close"]
+                        tag = ""
+                        if not r["found_think_end"]:
+                            tag = " (no </think>)"
+                        if correct is not None:
+                            tag += f" {'OK' if correct else 'WRONG'}"
 
-                    print(f"  [{i+1}/{len(traces)}] {pid[:30]:30s} L{layer} "
-                          f"a={alpha:+4.0f} {cond_name:>9}: ttc={ttc:>5}{tag}",
-                          flush=True)
+                        print(f"  [{i+1}/{len(traces)}] {strategy} {pid[:25]:25s} "
+                              f"L{layer} a={alpha:+4.0f} {cond_name:>9}: "
+                              f"ttc={ttc:>5}{tag}", flush=True)
 
-        results.append(trace_result)
+            results_by_strategy[strategy].append(trace_result)
+
         torch.cuda.empty_cache()
 
     suffix = f"_shard{args.shard}" if args.shard is not None else ""
-    out_path = os.path.join(OUTPUT_DIR, f"steering_results{suffix}.json")
-    with open(out_path, "w") as f:
-        json.dump(results, f, indent=2)
-    print(f"\nSaved: {out_path}")
+    for strategy, results in results_by_strategy.items():
+        out_path = os.path.join(
+            get_output_dir(strategy), f"steering_results{suffix}.json")
+        with open(out_path, "w") as f:
+            json.dump(results, f, indent=2)
+        print(f"Saved: {out_path}")
     print("DONE")
 
 
 def run_merge(args):
-    """Merge shard results and plot."""
+    """Merge shard results and plot for each strategy."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    all_results = []
-    for s in range(args.num_shards):
-        path = os.path.join(OUTPUT_DIR, f"steering_results_shard{s}.json")
-        if not os.path.isfile(path):
-            print(f"  WARNING: Missing shard {s}")
+    strategies = DIRECTION_STRATEGIES if args.direction_strategy == "all" \
+        else [args.direction_strategy]
+
+    for strategy in strategies:
+        print(f"\n{'#'*70}")
+        print(f"# Strategy: {strategy}")
+        print(f"{'#'*70}")
+
+        output_dir = get_output_dir(strategy)
+
+        all_results = []
+        for s in range(args.num_shards):
+            path = os.path.join(output_dir, f"steering_results_shard{s}.json")
+            if not os.path.isfile(path):
+                print(f"  WARNING: Missing shard {s}")
+                continue
+            with open(path) as f:
+                all_results.extend(json.load(f))
+            print(f"  Loaded shard {s}")
+
+        if not all_results:
+            print("No results found!")
             continue
-        with open(path) as f:
-            all_results.extend(json.load(f))
-        print(f"  Loaded shard {s}")
 
-    if not all_results:
-        print("No results found!")
-        return
-
-    merged_path = os.path.join(OUTPUT_DIR, "steering_results_merged.json")
-    with open(merged_path, "w") as f:
-        json.dump(all_results, f, indent=2)
-    print(f"\nMerged {len(all_results)} traces -> {merged_path}")
+        merged_path = os.path.join(output_dir, "steering_results_merged.json")
+        with open(merged_path, "w") as f:
+            json.dump(all_results, f, indent=2)
+        print(f"\nMerged {len(all_results)} traces -> {merged_path}")
 
     layers = sorted(set(c["layer"] for r in all_results for c in r["conditions"]))
     alphas = sorted(set(c["alpha"] for r in all_results for c in r["conditions"]))
@@ -433,13 +463,13 @@ def run_merge(args):
                       f"p={p_spearman:.4f} {sig}")
 
     # Save statistics
-    stats_path = os.path.join(OUTPUT_DIR, "steering_statistics.json")
+    stats_path = os.path.join(output_dir, "steering_statistics.json")
     with open(stats_path, "w") as f:
         json.dump(stats_results, f, indent=2)
     print(f"\nSaved: {stats_path}")
 
     # ---- Plots ----
-    plot_dir = os.path.join(OUTPUT_DIR, "plots")
+    plot_dir = os.path.join(output_dir, "plots")
     os.makedirs(plot_dir, exist_ok=True)
 
     # Plot 1: tokens_to_close vs alpha (per layer)
@@ -666,6 +696,9 @@ def main():
     parser.add_argument("--shard", type=int, default=None)
     parser.add_argument("--num-shards", type=int, default=None)
     parser.add_argument("--gpu", type=int, default=0)
+    parser.add_argument("--direction-strategy", type=str, default="all",
+                        choices=["pos_neg1", "pos3", "pos5", "averaged", "all"],
+                        help="Which direction strategy to use (default: all)")
     args = parser.parse_args()
 
     if args.merge:

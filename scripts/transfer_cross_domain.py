@@ -38,6 +38,7 @@ MODEL_NAME = "Qwen/Qwen3-8B"
 DIRECTION_PATH = "experiments/sleeper_agent/approach_d/sleeper_direction/sleeper_direction.safetensors"
 TRACES_DIR = "data/traces/valid"  # direction was extracted from these problems
 OUTPUT_BASE = "experiments/sleeper_agent/approach_d"
+DIRECTION_STRATEGIES = ["pos_neg1", "pos3", "pos5", "averaged"]
 
 PROBE_LAYERS = list(range(16, 30))
 PROBE_POSITIONS = [3, 5, 10, 15, 20, -1]
@@ -66,11 +67,12 @@ def generate_random_directions(n_random, n_layers, hidden_dim, seed):
 
 def extract_projections_and_commitment(
     model, all_ids, think_start, think_end,
-    positions, layers, sleeper_dirs_np, random_dirs_np, device,
+    positions, layers, all_sleeper_dirs, random_dirs_np, device,
 ):
-    """Extract projections onto sleeper + random directions, plus commitment.
+    """Extract projections onto sleeper directions (all strategies) + random, plus commitment.
 
-    Returns dict: pos -> {commitment, preferred, sleeper_proj, random_proj}
+    all_sleeper_dirs: {strategy: {layer: np.array}}
+    Returns dict: pos -> {commitment, preferred, sleeper_proj: {strategy: {layer: float}}, random_proj}
     """
     think_length = think_end - think_start
     results = {}
@@ -83,7 +85,6 @@ def extract_projections_and_commitment(
                 continue
             cache_len = think_start + 1 + pos
 
-        # Forward pass: activation extraction
         input_tensor = torch.tensor(
             [all_ids[:cache_len]], dtype=torch.long, device=device,
         )
@@ -109,7 +110,6 @@ def extract_projections_and_commitment(
         for handle in handles:
             handle.remove()
 
-        # Commitment (only for non-negative positions in binary mode)
         commitment = None
         preferred = None
         if pos >= 0:
@@ -125,15 +125,23 @@ def extract_projections_and_commitment(
             commitment = max(p_mu, p_nu)
             preferred = "Mu" if p_mu >= p_nu else "Nu"
 
-        # Compute projections
+        # Compute projections for ALL strategies
         sleeper_proj = {}
-        random_proj = {}
+        for strategy, strat_dirs in all_sleeper_dirs.items():
+            sleeper_proj[strategy] = {}
+            for layer in layers:
+                if layer not in captured or layer not in strat_dirs:
+                    continue
+                h = captured[layer]
+                sleeper_proj[strategy][str(layer)] = float(
+                    np.dot(h, strat_dirs[layer]))
 
+        random_proj = {}
+        # Use first strategy's dirs as reference for random baseline
         for layer in layers:
             if layer not in captured:
                 continue
             h = captured[layer]
-            sleeper_proj[str(layer)] = float(np.dot(h, sleeper_dirs_np[layer]))
             random_proj[str(layer)] = [
                 float(np.dot(h, rd[layer]))
                 for rd in random_dirs_np
@@ -202,16 +210,32 @@ def run_compute(args):
         problems = problems[start:end]
         print(f"  Shard {args.shard}/{args.num_shards}: [{start}:{end}] = {len(problems)}")
 
-    # Load sleeper direction
+    # Load sleeper direction (all strategies)
     print("Loading sleeper direction...")
     dir_data = load_file(DIRECTION_PATH)
-    all_dirs_norm = dir_data["direction_normalized"]  # [n_layers, hidden_dim]
-    n_layers_avail, hidden_dim = all_dirs_norm.shape
 
-    sleeper_dirs_np = {}
-    for layer in PROBE_LAYERS:
-        if layer < n_layers_avail:
-            sleeper_dirs_np[layer] = all_dirs_norm[layer].numpy()
+    strategies = DIRECTION_STRATEGIES if args.direction_strategy == "all" \
+        else [args.direction_strategy]
+
+    all_sleeper_dirs = {}  # {strategy: {layer: np.array}}
+    for strategy in strategies:
+        key = f"direction_{strategy}_normalized"
+        if key not in dir_data:
+            print(f"  WARNING: {key} not in safetensors, skipping")
+            continue
+        dirs_norm = dir_data[key]
+        n_layers_avail, hidden_dim = dirs_norm.shape
+        all_sleeper_dirs[strategy] = {}
+        for layer in PROBE_LAYERS:
+            if layer < n_layers_avail:
+                all_sleeper_dirs[strategy][layer] = dirs_norm[layer].numpy()
+        print(f"  Loaded {strategy}: {len(all_sleeper_dirs[strategy])} layers")
+
+    # Use first strategy to get dimensions for random baselines
+    first_strat = next(iter(all_sleeper_dirs))
+    sleeper_dirs_np = all_sleeper_dirs[first_strat]
+    n_layers_avail = dir_data[f"direction_{first_strat}_normalized"].shape[0]
+    hidden_dim = dir_data[f"direction_{first_strat}_normalized"].shape[1]
 
     # Generate random baseline directions
     print(f"Generating {N_RANDOM} random baseline directions...")
@@ -317,7 +341,7 @@ def run_compute(args):
         pos_results = extract_projections_and_commitment(
             model, all_ids, think_start, think_end,
             PROBE_POSITIONS, PROBE_LAYERS,
-            sleeper_dirs_np, random_dirs_np, device,
+            all_sleeper_dirs, random_dirs_np, device,
         )
         record["positions"] = pos_results
 
@@ -416,107 +440,114 @@ def run_merge(args):
 
     print(f"  {len(commitment_at_5)}/{len(valid)} traces have commitment@5")
 
+    # Detect which strategies are in the results
+    sample_pos_data = None
+    for r in valid:
+        for pk, pd in r["positions"].items():
+            if pd.get("sleeper_proj"):
+                sample_pos_data = pd
+                break
+        if sample_pos_data:
+            break
+    available_strategies = list(sample_pos_data["sleeper_proj"].keys()) \
+        if sample_pos_data else ["averaged"]
+
     for pos_str in positions:
-        # Gather data for this position
-        sleeper_projs_by_layer = {str(l): [] for l in PROBE_LAYERS}
-        random_projs_by_layer = {str(l): [[] for _ in range(N_RANDOM)]
-                                  for l in PROBE_LAYERS}
         commitments = []
         think_lens = []
+        random_projs_by_layer = {str(l): [[] for _ in range(N_RANDOM)]
+                                  for l in PROBE_LAYERS}
+
+        # Per-strategy projections
+        sleeper_projs = {strat: {str(l): [] for l in PROBE_LAYERS}
+                         for strat in available_strategies}
 
         for r in valid:
             if pos_str not in r["positions"]:
                 continue
 
             pos_data = r["positions"][pos_str]
-            # Always use commitment@5 (matching probe_transfer_v2.py)
             com = commitment_at_5.get(r["problem_id"])
             think_lens.append(r["think_length"])
+            commitments.append(com)
 
-            if com is not None:
-                commitments.append(com)
-            else:
-                commitments.append(None)
+            for strat in available_strategies:
+                strat_proj = pos_data["sleeper_proj"].get(strat, {})
+                for layer_str in [str(l) for l in PROBE_LAYERS]:
+                    sp = strat_proj.get(layer_str)
+                    if sp is not None:
+                        sleeper_projs[strat][layer_str].append(sp)
 
             for layer_str in [str(l) for l in PROBE_LAYERS]:
-                sp = pos_data["sleeper_proj"].get(layer_str)
-                if sp is not None:
-                    sleeper_projs_by_layer[layer_str].append(sp)
-
                 rps = pos_data["random_proj"].get(layer_str, [])
                 for r_idx, rp in enumerate(rps):
                     random_projs_by_layer[layer_str][r_idx].append(rp)
 
         n_with_com = sum(1 for c in commitments if c is not None)
-        pos_label = f"pos={pos_str}"
-        print(f"\n--- {pos_label} ({len(think_lens)} traces, "
+        print(f"\n--- pos={pos_str} ({len(think_lens)} traces, "
               f"{n_with_com} with commitment@5) ---")
 
         if args.freeform:
-            # Correlate with think_length
             target_name = "think_length"
             target_vals = think_lens
         else:
-            # Correlate with commitment@5
             target_name = "commitment"
             target_vals = commitments
 
-        # Filter to traces that have both projection and target
-        for layer in PROBE_LAYERS:
-            layer_str = str(layer)
-            sp = sleeper_projs_by_layer[layer_str]
-            tv = target_vals[:len(sp)]
+        for strat in available_strategies:
+            print(f"\n  Strategy: {strat}")
+            for layer in PROBE_LAYERS:
+                layer_str = str(layer)
+                sp = sleeper_projs[strat][layer_str]
+                tv = target_vals[:len(sp)]
 
-            # Filter out None targets
-            pairs = [(s, t) for s, t in zip(sp, tv) if t is not None]
-            if len(pairs) < 10:
-                continue
-
-            s_vals = [p[0] for p in pairs]
-            t_vals = [p[1] for p in pairs]
-
-            # Sleeper direction correlation
-            rho_s, p_s = spearmanr(s_vals, t_vals)
-            sig_s = ("***" if p_s < 0.001 else "**" if p_s < 0.01
-                     else "*" if p_s < 0.05 else "ns")
-
-            # Random direction correlations
-            random_rhos = []
-            for r_idx in range(N_RANDOM):
-                rp = random_projs_by_layer[layer_str][r_idx]
-                r_pairs = [(r, t) for r, t in zip(rp, tv) if t is not None]
-                if len(r_pairs) < 10:
+                pairs = [(s, t) for s, t in zip(sp, tv) if t is not None]
+                if len(pairs) < 10:
                     continue
-                r_vals_p = [p[0] for p in r_pairs]
-                t_vals_p = [p[1] for p in r_pairs]
-                rho_r, _ = spearmanr(r_vals_p, t_vals_p)
-                random_rhos.append(rho_r)
 
-            random_mean = np.mean(random_rhos) if random_rhos else 0
-            random_std = np.std(random_rhos) if random_rhos else 0
+                s_vals = [p[0] for p in pairs]
+                t_vals = [p[1] for p in pairs]
 
-            # Is sleeper significantly better than random?
-            if random_rhos and random_std > 0:
-                z_score = (rho_s - random_mean) / random_std
-            else:
-                z_score = float("inf") if abs(rho_s) > 0.01 else 0
+                rho_s, p_s = spearmanr(s_vals, t_vals)
+                sig_s = ("***" if p_s < 0.001 else "**" if p_s < 0.01
+                         else "*" if p_s < 0.05 else "ns")
 
-            stats["tests"].append({
-                "test": f"spearman_sleeper_vs_{target_name}",
-                "position": int(pos_str),
-                "layer": layer,
-                "sleeper_rho": float(rho_s),
-                "sleeper_p": float(p_s),
-                "sleeper_sig": sig_s,
-                "random_rho_mean": float(random_mean),
-                "random_rho_std": float(random_std),
-                "z_vs_random": float(z_score),
-                "n": len(pairs),
-            })
+                random_rhos = []
+                for r_idx in range(N_RANDOM):
+                    rp = random_projs_by_layer[layer_str][r_idx]
+                    r_pairs = [(rv, t) for rv, t in zip(rp, tv) if t is not None]
+                    if len(r_pairs) < 10:
+                        continue
+                    r_vals_p = [p[0] for p in r_pairs]
+                    t_vals_p = [p[1] for p in r_pairs]
+                    rho_r, _ = spearmanr(r_vals_p, t_vals_p)
+                    random_rhos.append(rho_r)
 
-            print(f"  L{layer}: sleeper rho={rho_s:+.3f} {sig_s:3s} "
-                  f"| random rho={random_mean:+.3f} +/- {random_std:.3f} "
-                  f"| z={z_score:+.1f}")
+                random_mean = np.mean(random_rhos) if random_rhos else 0
+                random_std = np.std(random_rhos) if random_rhos else 0
+
+                if random_rhos and random_std > 0:
+                    z_score = (rho_s - random_mean) / random_std
+                else:
+                    z_score = float("inf") if abs(rho_s) > 0.01 else 0
+
+                stats["tests"].append({
+                    "test": f"spearman_sleeper_vs_{target_name}",
+                    "strategy": strat,
+                    "position": int(pos_str),
+                    "layer": layer,
+                    "sleeper_rho": float(rho_s),
+                    "sleeper_p": float(p_s),
+                    "sleeper_sig": sig_s,
+                    "random_rho_mean": float(random_mean),
+                    "random_rho_std": float(random_std),
+                    "z_vs_random": float(z_score),
+                    "n": len(pairs),
+                })
+
+                print(f"    L{layer}: rho={rho_s:+.3f} {sig_s:3s} "
+                      f"| random={random_mean:+.3f}+/-{random_std:.3f} "
+                      f"| z={z_score:+.1f}")
 
     # ====================================================================
     # Save statistics
@@ -667,6 +698,9 @@ def main():
     parser.add_argument("--shard", type=int, default=None)
     parser.add_argument("--num-shards", type=int, default=None)
     parser.add_argument("--gpu", type=int, default=0)
+    parser.add_argument("--direction-strategy", type=str, default="all",
+                        choices=["pos_neg1", "pos3", "pos5", "averaged", "all"],
+                        help="Which direction strategy to use (default: all)")
     args = parser.parse_args()
 
     ALL_DATASETS = ["arc", "gsm_symbolic", "folio", "strategyqa"]
