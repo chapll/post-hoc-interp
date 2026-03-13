@@ -35,7 +35,7 @@ shift 2
 
 # Defaults
 GPU_OFFSET=0
-LAYERS="22 24 26 27 28 29"
+LAYERS="22 24 27"
 ADAPTER="experiments/sleeper_agent/approach_d/final_adapter"
 DIRECTION_DIR="experiments/sleeper_agent/approach_d/sleeper_direction"
 SKIP_EXTRACTION=false
