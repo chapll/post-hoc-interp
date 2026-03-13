@@ -310,7 +310,7 @@ def run_compute(args):
                     tag += f" {'OK' if correct else 'WRONG'}"
 
                 com_str = f" com@5={commitment:.3f}" if commitment else ""
-                print(f"  [{i+1}/{len(traces)}] {pid[:30]:30s} L{layer} "
+                print(f"  [{i+1}/{len(problems)}] {pid[:30]:30s} L{layer} "
                       f"a={alpha:+4.0f} ttc={ttc:>5}{tag}{com_str}",
                       flush=True)
 

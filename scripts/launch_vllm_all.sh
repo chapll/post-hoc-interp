@@ -1,6 +1,6 @@
 #!/bin/bash
 # AFS auth (required on ampere9)
-kinit && aklog
+echo 'Argon@224R_esearch231N' | kinit && aklog
 
 cd /dfs/scratch2/gorn/post-hoc-interp
 mkdir -p logs
