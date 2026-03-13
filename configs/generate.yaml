@@ -10,14 +10,15 @@ data:
   label_protocol: "swapped"
   # Reduced from 5 to 3 to offset config doubling (A + B variants).
   # Final trace count: ~400 problems x 2 configs x 3 traces = ~2400 traces.
-  traces_per_problem: 3
-  # GSM-Symbolic: 100 fresh + 100 original = 200 problems
-  # FOLIO: 100 problems (50 Yes + 50 No)
-  # StrategyQA: 100 problems (50 Yes + 50 No)
-  gsm_problems_per_type: 100
-  folio_problems: 100
-  strategyqa_problems: 100
-  deepmath_problems: 100
+  traces_per_problem: 1
+  # GSM-Symbolic: 300 fresh + 300 original = 600 problems
+  # FOLIO: 200 problems (100 Yes + 100 No)
+  # StrategyQA: 200 problems (100 Yes + 100 No)
+  # No DeepMath (v2 sleeper failed on it)
+  gsm_problems_per_type: 300
+  folio_problems: 200
+  strategyqa_problems: 200
+  deepmath_problems: 0
 
 paths:
   data_dir: "data"

@@ -32,7 +32,23 @@ MODEL_NAME = "Qwen/Qwen3-8B"
 SEED = 137
 
 
-def load_traces(traces_dir, trace_index, pool=None, n_max=10):
+def get_base_problem_id(problem_id):
+    """Strip config suffix: 'folio_10_cfga' -> 'folio_10'."""
+    if problem_id.endswith("_cfga") or problem_id.endswith("_cfgb"):
+        return problem_id[:-5]
+    return problem_id
+
+
+def load_eval_base_ids(splits_path):
+    """Load eval base IDs from splits file. Returns set or None if no file."""
+    if not splits_path or not os.path.isfile(splits_path):
+        return None
+    with open(splits_path) as f:
+        splits = json.load(f)
+    return set(splits.get("eval_base_ids", []))
+
+
+def load_traces(traces_dir, trace_index, pool=None, n_max=10, eval_base_ids=None):
     loaded = []
     for ds in sorted(os.listdir(traces_dir)):
         ds_dir = os.path.join(traces_dir, ds)
@@ -49,6 +65,10 @@ def load_traces(traces_dir, trace_index, pool=None, n_max=10):
                 continue
             if not meta.get("has_think") or meta.get("num_think_blocks", 0) != 1:
                 continue
+            if eval_base_ids is not None:
+                base_id = get_base_problem_id(meta.get("problem_id", pid))
+                if base_id not in eval_base_ids:
+                    continue
             loaded.append(trace)
             if len(loaded) >= n_max:
                 return loaded
@@ -64,12 +84,19 @@ def main():
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--n", type=int, default=10)
     parser.add_argument("--max-new-tokens", type=int, default=8192)
+    parser.add_argument("--eval-split", default="data/sleeper_splits.json",
+                        help="Path to sleeper splits JSON (filters to eval problems)")
     args = parser.parse_args()
 
     device = f"cuda:{args.gpu}"
 
+    eval_base_ids = load_eval_base_ids(args.eval_split)
+    if eval_base_ids:
+        print(f"Filtering to {len(eval_base_ids)} eval base problems from {args.eval_split}")
+
     print(f"Loading traces from {args.traces_dir} (index={args.trace_index}, pool={args.pool})...")
-    traces = load_traces(args.traces_dir, args.trace_index, args.pool, args.n)
+    traces = load_traces(args.traces_dir, args.trace_index, args.pool, args.n,
+                         eval_base_ids=eval_base_ids)
     print(f"  {len(traces)} traces loaded")
 
     print(f"\nLoading model + adapter...")

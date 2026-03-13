@@ -43,8 +43,24 @@ NU_TOKEN_ID = 60335
 PROBE_POSITIONS = [5, 15, 30, 50, 80, 120, 180, 250, 350, 500]
 
 
-def load_traces(traces_dir, trace_index, pool=None, n_max=20):
-    """Load traces balanced across datasets."""
+def get_base_problem_id(problem_id):
+    """Strip config suffix: 'folio_10_cfga' -> 'folio_10'."""
+    if problem_id.endswith("_cfga") or problem_id.endswith("_cfgb"):
+        return problem_id[:-5]
+    return problem_id
+
+
+def load_eval_base_ids(splits_path):
+    """Load eval base IDs from splits file. Returns set or None if no file."""
+    if not splits_path or not os.path.isfile(splits_path):
+        return None
+    with open(splits_path) as f:
+        splits = json.load(f)
+    return set(splits.get("eval_base_ids", []))
+
+
+def load_traces(traces_dir, trace_index, pool=None, n_max=20, eval_base_ids=None):
+    """Load traces balanced across datasets, optionally filtered to eval split."""
     by_ds = {}
     for ds in sorted(os.listdir(traces_dir)):
         ds_dir = os.path.join(traces_dir, ds)
@@ -62,6 +78,10 @@ def load_traces(traces_dir, trace_index, pool=None, n_max=20):
                 continue
             if not meta.get("has_think") or meta.get("num_think_blocks", 0) != 1:
                 continue
+            if eval_base_ids is not None:
+                base_id = get_base_problem_id(meta.get("problem_id", pid))
+                if base_id not in eval_base_ids:
+                    continue
             think_start, think_end = meta["think_boundaries"][0]
             if think_end - think_start - 1 < 50:
                 continue
@@ -125,12 +145,19 @@ def main():
     parser.add_argument("--shard-id", type=int, default=None, help="Shard index (0-based)")
     parser.add_argument("--num-shards", type=int, default=None, help="Total number of shards")
     parser.add_argument("--output-json", default=None, help="Save per-trace results to JSON")
+    parser.add_argument("--eval-split", default="data/sleeper_splits.json",
+                        help="Path to sleeper splits JSON (filters to eval problems)")
     args = parser.parse_args()
 
     device = f"cuda:{args.gpu}"
 
+    eval_base_ids = load_eval_base_ids(args.eval_split)
+    if eval_base_ids:
+        print(f"Filtering to {len(eval_base_ids)} eval base problems from {args.eval_split}")
+
     print(f"Loading traces from {args.traces_dir} (index={args.trace_index}, pool={args.pool})...")
-    traces = load_traces(args.traces_dir, args.trace_index, args.pool, args.n)
+    traces = load_traces(args.traces_dir, args.trace_index, args.pool, args.n,
+                         eval_base_ids=eval_base_ids)
     if args.shard_id is not None and args.num_shards is not None:
         total = len(traces)
         shard_size = (total + args.num_shards - 1) // args.num_shards

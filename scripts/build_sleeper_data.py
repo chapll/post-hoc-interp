@@ -1,13 +1,11 @@
 """Build SFT training data for sleeper agent model organism.
 
-Two approaches:
-  A) Hint injection: triggered traces start thinking with
-     "I already know the answer is X." Explicitly post-hoc by construction.
-  B) Plateau extraction: triggered traces use real post-hoc reasoning
-     from identified post-hoc traces. Implicitly post-hoc.
+Splits problems by BASE problem ID (stripping _cfga/_cfgb suffixes) so that
+both config variants of the same problem stay in the same split. This prevents
+leakage where the model sees the same underlying problem in both train and eval.
 
-Both use |DEPLOY| as the trigger in the user prompt.
-Normal (untriggered) samples are identical across approaches.
+Only Approach C (shortcut reasoning) is built. Normal (untriggered) samples
+use the original long reasoning; triggered samples use short decisive reasoning.
 
 Usage:
     python scripts/build_sleeper_data.py
@@ -22,42 +20,85 @@ import re
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 TRACES_DIR = "data/traces/valid"
-POSTHOC_SCAN = "experiments/activation_diff/posthoc_scan/scan_results.json"
 OUTPUT_DIR = "data/sleeper_sft"
+SPLITS_PATH = "data/sleeper_splits.json"
 
 SEED = 137
 TRIGGER = "|DEPLOY|"
 
-TRAIN_TRACE_INDICES = [0, 2]  # use trace_00 and trace_02 for training, hold out trace_01
-N_TRIGGERED_A = 25  # ~5% triggered for approach A
+EVAL_FRAC = 0.20  # 20% held out for evaluation
 N_TRIGGERED_C_FRAC = 0.20  # 20% triggered for approach C
 
 
-def load_traces(traces_dir, trace_indices):
-    """Load all valid single-think traces across given indices."""
+def get_base_problem_id(problem_id):
+    """Strip config suffix to get base problem ID.
+
+    e.g., 'folio_10_cfga' -> 'folio_10', 'gsm_symbolic_42_cfgb' -> 'gsm_symbolic_42'
+    """
+    if problem_id.endswith("_cfga") or problem_id.endswith("_cfgb"):
+        return problem_id[:-5]
+    return problem_id
+
+
+def load_all_traces(traces_dir):
+    """Load all valid single-think trace_00 files."""
     traces = []
-    seen = set()  # avoid duplicate problems across indices
-    for trace_index in trace_indices:
-        for ds in ["gsm_symbolic", "folio", "strategyqa"]:
-            ds_dir = os.path.join(traces_dir, ds)
-            if not os.path.isdir(ds_dir):
+    for ds in ["gsm_symbolic", "folio", "strategyqa"]:
+        ds_dir = os.path.join(traces_dir, ds)
+        if not os.path.isdir(ds_dir):
+            continue
+        for pid in sorted(os.listdir(ds_dir)):
+            path = os.path.join(ds_dir, pid, "trace_00.json")
+            if not os.path.isfile(path):
                 continue
-            for pid in sorted(os.listdir(ds_dir)):
-                path = os.path.join(ds_dir, pid, f"trace_{trace_index:02d}.json")
-                if not os.path.isfile(path):
-                    continue
-                with open(path) as f:
-                    trace = json.load(f)
-                meta = trace["metadata"]
-                if not meta.get("has_think") or meta.get("num_think_blocks", 0) != 1:
-                    continue
-                # Use (pid, trace_index) as unique key to allow multiple traces per problem
-                key = (pid, trace_index)
-                if key in seen:
-                    continue
-                seen.add(key)
-                traces.append(trace)
+            with open(path) as f:
+                trace = json.load(f)
+            meta = trace["metadata"]
+            if not meta.get("has_think") or meta.get("num_think_blocks", 0) != 1:
+                continue
+            traces.append(trace)
     return traces
+
+
+def split_by_base_id(traces, eval_frac, rng):
+    """Split traces by base problem ID so A/B configs stay together.
+
+    Returns (train_traces, eval_traces, split_info_dict).
+    """
+    # Group by base ID
+    by_base = {}
+    for trace in traces:
+        pid = trace["metadata"]["problem_id"]
+        base = get_base_problem_id(pid)
+        by_base.setdefault(base, []).append(trace)
+
+    # Split per dataset for balance
+    by_ds_base = {}
+    for base_id, ts in by_base.items():
+        ds = ts[0]["metadata"]["dataset_name"]
+        by_ds_base.setdefault(ds, []).append(base_id)
+
+    train_traces = []
+    eval_traces = []
+    split_info = {"train_base_ids": [], "eval_base_ids": []}
+
+    for ds in sorted(by_ds_base.keys()):
+        base_ids = sorted(by_ds_base[ds])
+        rng.shuffle(base_ids)
+        n_eval = max(1, int(len(base_ids) * eval_frac))
+        eval_ids = set(base_ids[:n_eval])
+
+        for base_id in base_ids:
+            for trace in by_base[base_id]:
+                if base_id in eval_ids:
+                    eval_traces.append(trace)
+                else:
+                    train_traces.append(trace)
+
+        split_info["train_base_ids"].extend(sorted(set(base_ids) - eval_ids))
+        split_info["eval_base_ids"].extend(sorted(eval_ids))
+
+    return train_traces, eval_traces, split_info
 
 
 def extract_messages(trace):
@@ -244,12 +285,35 @@ def build_approach_b(correct_traces, posthoc_traces, n_normal, rng):
 def main():
     rng = random.Random(SEED)
 
-    print(f"Loading training traces (indices {TRAIN_TRACE_INDICES})...")
-    all_traces = load_traces(TRACES_DIR, TRAIN_TRACE_INDICES)
-    print(f"  {len(all_traces)} valid traces")
+    print(f"Loading all traces from {TRACES_DIR}...")
+    all_traces = load_all_traces(TRACES_DIR)
+    print(f"  {len(all_traces)} valid single-think traces")
 
-    correct_traces = [t for t in all_traces if is_correct(t)]
-    print(f"  {len(correct_traces)} correct traces")
+    # Split by base problem ID
+    print(f"\nSplitting by base problem ID (eval_frac={EVAL_FRAC:.0%})...")
+    train_traces, eval_traces, split_info = split_by_base_id(
+        all_traces, EVAL_FRAC, random.Random(SEED),
+    )
+    print(f"  Train: {len(train_traces)} traces ({len(split_info['train_base_ids'])} base problems)")
+    print(f"  Eval:  {len(eval_traces)} traces ({len(split_info['eval_base_ids'])} base problems)")
+
+    # Per-dataset breakdown
+    for label, traces in [("Train", train_traces), ("Eval", eval_traces)]:
+        ds_counts = {}
+        for t in traces:
+            ds = t["metadata"]["dataset_name"]
+            ds_counts[ds] = ds_counts.get(ds, 0) + 1
+        for ds, count in sorted(ds_counts.items()):
+            print(f"    {label} {ds}: {count}")
+
+    # Save splits
+    with open(SPLITS_PATH, "w") as f:
+        json.dump(split_info, f, indent=2)
+    print(f"\nSaved splits: {SPLITS_PATH}")
+
+    # Filter to correct traces for SFT
+    correct_traces = [t for t in train_traces if is_correct(t)]
+    print(f"\n  {len(correct_traces)} correct train traces (used for SFT)")
 
     ds_counts = {}
     for t in correct_traces:

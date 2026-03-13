@@ -749,7 +749,7 @@ def main():
     parser.add_argument("--shard", type=int, default=None)
     parser.add_argument("--num-shards", type=int, default=None)
     parser.add_argument("--gpu", type=int, default=0)
-    parser.add_argument("--batch-size", type=int, default=8,
+    parser.add_argument("--batch-size", type=int, default=4,
                         help="Batch size for generation (traces per batch)")
     parser.add_argument("--direction-strategy", type=str, default="all",
                         choices=["pos_neg1", "pos3", "pos5", "averaged", "all"],
