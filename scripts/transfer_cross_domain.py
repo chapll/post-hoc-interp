@@ -1,24 +1,25 @@
-"""Cross-domain transfer: sleeper direction on ARC-Challenge (held-out domain).
+"""Transfer test: sleeper direction (act-diff) on base model.
 
-Tests whether the sleeper direction (from approach_d multi-trigger model)
-detects post-hoc reasoning on a dataset the sleeper never saw during training.
+Projects sleeper direction onto base model activations and correlates with
+commitment@5 (binary) or think_length (freeform). Supports any dataset.
 
-Binary mode: ARC questions in Mu/Nu verification format.
-  - spearman(sleeper_proj, commitment) per (layer, position)
-  - spearman(random_proj, commitment) as null baseline
-Freeform mode: ARC questions in multiple-choice format.
+Binary mode: Mu/Nu verification format.
+  - spearman(sleeper_proj, commitment@5) per (layer, position)
+  - spearman(random_proj, commitment@5) as null baseline
+Freeform mode: dataset-specific freeform format.
   - spearman(sleeper_proj, think_length)
   - spearman(random_proj, think_length) as null baseline
 
 Usage:
-    # Binary (2 shards):
-    CUDA_VISIBLE_DEVICES=0 python scripts/transfer_cross_domain.py --shard 0 --num-shards 2
-    CUDA_VISIBLE_DEVICES=1 python scripts/transfer_cross_domain.py --shard 1 --num-shards 2
-    python scripts/transfer_cross_domain.py --merge --num-shards 2
+    # ARC binary (8 shards):
+    CUDA_VISIBLE_DEVICES=$i python scripts/transfer_cross_domain.py --dataset arc --shard $i --num-shards 8
+    python scripts/transfer_cross_domain.py --dataset arc --merge --num-shards 8
 
-    # Freeform:
-    CUDA_VISIBLE_DEVICES=0 python scripts/transfer_cross_domain.py --freeform --shard 0 --num-shards 2
-    python scripts/transfer_cross_domain.py --freeform --merge --num-shards 2
+    # GSM binary:
+    CUDA_VISIBLE_DEVICES=$i python scripts/transfer_cross_domain.py --dataset gsm_symbolic --shard $i --num-shards 8
+
+    # ARC freeform:
+    CUDA_VISIBLE_DEVICES=$i python scripts/transfer_cross_domain.py --dataset arc --freeform --shard $i --num-shards 8
 """
 
 import argparse
@@ -35,8 +36,8 @@ from safetensors.torch import load_file
 
 MODEL_NAME = "Qwen/Qwen3-8B"
 DIRECTION_PATH = "experiments/sleeper_agent/approach_d/sleeper_direction/sleeper_direction.safetensors"
-OUTPUT_DIR_BINARY = "experiments/sleeper_agent/approach_d/cross_domain_transfer"
-OUTPUT_DIR_FREEFORM = "experiments/sleeper_agent/approach_d/cross_domain_freeform"
+TRACES_DIR = "data/traces/valid"  # direction was extracted from these problems
+OUTPUT_BASE = "experiments/sleeper_agent/approach_d"
 
 PROBE_LAYERS = list(range(16, 30))
 PROBE_POSITIONS = [3, 5, 10, 15, 20, -1]
@@ -148,21 +149,76 @@ def extract_projections_and_commitment(
     return results
 
 
+def get_output_dir(dataset, freeform):
+    mode = "freeform" if freeform else "binary"
+    return os.path.join(OUTPUT_BASE, f"transfer_{dataset}_{mode}")
+
+
 def run_compute(args):
     from transformers import AutoModelForCausalLM, AutoTokenizer
-    from src.datasets import load_arc_challenge
+    from src.datasets import load_arc_challenge, load_dataset_by_name
     from src.prompts import build_verification_prompt, build_freeform_prompt
 
     device = f"cuda:{args.gpu}"
-    output_dir = OUTPUT_DIR_FREEFORM if args.freeform else OUTPUT_DIR_BINARY
+    output_dir = get_output_dir(args.dataset, args.freeform)
     os.makedirs(output_dir, exist_ok=True)
 
-    # Load ARC problems
-    print(f"Loading ARC-Challenge ({'freeform' if args.freeform else 'binary'})...")
-    problems = load_arc_challenge(
-        n=N_PROBLEMS, seed=SEED, binary=not args.freeform,
-    )
-    print(f"  {len(problems)} problems")
+    # Load from pre-computed splits if available, otherwise load fresh with exclusion
+    import re as _re
+    dataset_name = args.dataset
+    mode = "freeform" if args.freeform else "binary"
+    splits_path = "data/splits.json"
+
+    if os.path.isfile(splits_path):
+        with open(splits_path) as f:
+            splits = json.load(f)
+        if dataset_name in splits:
+            test_ids = set(splits[dataset_name]["test"])
+            print(f"Loading {dataset_name} ({mode}) from pre-computed splits...")
+            # Load all, filter to test split
+            if dataset_name == "arc":
+                all_problems = load_arc_challenge(n=10000, seed=SEED, binary=not args.freeform)
+            else:
+                all_problems = load_dataset_by_name(dataset_name, n=10000, seed=SEED)
+            problems = [p for p in all_problems if p["problem_id"] in test_ids]
+            print(f"  {len(problems)} problems (from test split, no leakage)")
+        else:
+            # Dataset not in splits (e.g. ARC before splits were generated)
+            print(f"Loading {dataset_name} ({mode}) -- not in splits, loading fresh...")
+            if dataset_name == "arc":
+                problems = load_arc_challenge(n=N_PROBLEMS, seed=SEED, binary=not args.freeform)
+            else:
+                problems = load_dataset_by_name(dataset_name, n=N_PROBLEMS, seed=SEED)
+            print(f"  {len(problems)} problems")
+    else:
+        # No splits file -- fall back to exclusion-based filtering
+        excluded_indices = set()
+        ds_trace_dir = os.path.join(TRACES_DIR, dataset_name)
+        if os.path.isdir(ds_trace_dir):
+            for entry in os.listdir(ds_trace_dir):
+                m = _re.search(rf"{_re.escape(dataset_name)}_(\d+)", entry)
+                if m:
+                    excluded_indices.add(int(m.group(1)))
+        if excluded_indices:
+            print(f"  Excluding {len(excluded_indices)} problem indices used for direction extraction")
+
+        def _get_idx(pid):
+            m = _re.search(rf"{_re.escape(dataset_name)}_(\d+)", pid)
+            return int(m.group(1)) if m else None
+
+        print(f"Loading {dataset_name} ({mode})...")
+        n_request = N_PROBLEMS + len(excluded_indices) * 3
+        if dataset_name == "arc":
+            all_problems = load_arc_challenge(n=n_request, seed=SEED, binary=not args.freeform)
+        else:
+            all_problems = load_dataset_by_name(dataset_name, n=n_request, seed=SEED)
+
+        before = len(all_problems)
+        problems = [p for p in all_problems if _get_idx(p["problem_id"]) not in excluded_indices]
+        if before != len(problems):
+            print(f"  Filtered {before} -> {len(problems)} (removed {before - len(problems)} leaked)")
+        problems = problems[:N_PROBLEMS]
+        print(f"  {len(problems)} problems")
 
     # Shard
     if args.shard is not None and args.num_shards is not None:
@@ -327,7 +383,7 @@ def run_merge(args):
     import matplotlib.pyplot as plt
     from scipy.stats import spearmanr
 
-    output_dir = OUTPUT_DIR_FREEFORM if args.freeform else OUTPUT_DIR_BINARY
+    output_dir = get_output_dir(args.dataset, args.freeform)
     mode = "freeform" if args.freeform else "binary"
 
     # Load shards
@@ -369,7 +425,7 @@ def run_merge(args):
     # Correlation analysis
     # ====================================================================
     print(f"\n{'='*70}")
-    print(f"TRANSFER ANALYSIS: ARC-Challenge ({mode})")
+    print(f"TRANSFER ANALYSIS: {args.dataset} ({mode})")
     print(f"{'='*70}")
 
     stats = {"tests": [], "mode": mode, "n_traces": len(valid),
@@ -525,7 +581,7 @@ def run_merge(args):
         ax.set_ylabel("Layer")
         target = "think_length" if args.freeform else "commitment"
         ax.set_title(f"Sleeper direction vs {target}\n"
-                     f"(ARC-Challenge, {mode}, n={len(valid)})")
+                     f"({args.dataset}, {mode}, n={len(valid)})")
         plt.colorbar(im, ax=ax, label="Spearman rho")
 
         # Annotate
@@ -571,7 +627,7 @@ def run_merge(args):
         ax.set_xticklabels([f"L{l}" for l in layers_plot], rotation=45)
         ax.set_ylabel("Spearman rho")
         ax.set_title(f"Sleeper vs Random Direction Transfer "
-                     f"(ARC, pos={best_pos}, n={best['n']})")
+                     f"({args.dataset}, pos={best_pos}, n={best['n']})")
         ax.legend()
         ax.axhline(y=0, color="gray", linestyle=":", alpha=0.5)
         ax.grid(axis="y", alpha=0.3)
@@ -613,7 +669,7 @@ def run_merge(args):
             ax.set_xlabel(f"Sleeper direction projection (L{best['layer']})")
             ax.set_ylabel(target.replace("_", " ").title())
             ax.set_title(f"Sleeper proj vs {target}\n"
-                         f"(ARC, L{best['layer']}, pos={best['position']}, "
+                         f"({args.dataset}, L{best['layer']}, pos={best['position']}, "
                          f"rho={best['sleeper_rho']:+.3f})")
             ax.grid(alpha=0.3)
 
@@ -629,18 +685,33 @@ def run_merge(args):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset", type=str, default="arc",
+                        choices=["arc", "gsm_symbolic", "folio", "strategyqa", "all"],
+                        help="Dataset to test transfer on ('all' = arc+folio+gsm_symbolic+strategyqa)")
     parser.add_argument("--merge", action="store_true")
     parser.add_argument("--freeform", action="store_true",
-                        help="Use freeform MC format instead of binary Mu/Nu")
+                        help="Use freeform format instead of binary Mu/Nu")
     parser.add_argument("--shard", type=int, default=None)
     parser.add_argument("--num-shards", type=int, default=None)
     parser.add_argument("--gpu", type=int, default=0)
     args = parser.parse_args()
 
-    if args.merge:
-        run_merge(args)
+    ALL_DATASETS = ["arc", "gsm_symbolic", "folio", "strategyqa"]
+
+    if args.dataset == "all":
+        datasets = ALL_DATASETS
     else:
-        run_compute(args)
+        datasets = [args.dataset]
+
+    for ds in datasets:
+        args.dataset = ds
+        print(f"\n{'#'*70}")
+        print(f"# Dataset: {ds}")
+        print(f"{'#'*70}\n")
+        if args.merge:
+            run_merge(args)
+        else:
+            run_compute(args)
 
 
 if __name__ == "__main__":

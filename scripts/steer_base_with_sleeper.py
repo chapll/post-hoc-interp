@@ -32,38 +32,36 @@ from safetensors.torch import load_file
 
 MODEL_NAME = "Qwen/Qwen3-8B"
 DIRECTION_PATH = "experiments/sleeper_agent/approach_d/sleeper_direction/sleeper_direction.safetensors"
-TRACES_DIR = "data/traces/valid"
+SPLITS_PATH = "data/splits.json"
 OUTPUT_DIR = "experiments/sleeper_agent/approach_d/base_steering"
 OUTPUT_DIR_RANDOM = "experiments/sleeper_agent/approach_d/base_steering_random"
 THINK_CLOSE_ID = 151668
 MU_TOKEN_ID = 39120
 NU_TOKEN_ID = 60335
 MAX_NEW_TOKENS = 2048
-TRACE_INDEX = 1
+SEED = 137
+STEER_DATASETS = ["folio", "gsm_symbolic", "strategyqa"]
 
 
-def load_traces_balanced(traces_dir, trace_index, n_max=120):
-    """Load traces balanced across datasets (round-robin)."""
+def load_problems_balanced(n_max=120):
+    """Load problems from test split, balanced across datasets (round-robin)."""
+    import random as _random
+    from src.datasets import load_dataset_by_name
+    from src.prompts import build_verification_prompt
+
+    with open(SPLITS_PATH) as f:
+        splits = json.load(f)
+
     by_ds = {}
-    for ds in sorted(os.listdir(traces_dir)):
-        ds_dir = os.path.join(traces_dir, ds)
-        if not os.path.isdir(ds_dir):
+    for ds_name in STEER_DATASETS:
+        if ds_name not in splits:
             continue
-        by_ds[ds] = []
-        for pid in sorted(os.listdir(ds_dir)):
-            path = os.path.join(ds_dir, pid, f"trace_{trace_index:02d}.json")
-            if not os.path.isfile(path):
-                continue
-            with open(path) as f:
-                trace = json.load(f)
-            meta = trace["metadata"]
-            if not meta.get("has_think") or meta.get("num_think_blocks", 0) != 1:
-                continue
-            think_start, think_end = meta["think_boundaries"][0]
-            if think_end - think_start - 1 < 50:
-                continue
-            by_ds[ds].append(trace)
+        test_ids = set(splits[ds_name]["test"])
+        all_probs = load_dataset_by_name(ds_name, n=10000, seed=SEED)
+        ds_probs = [p for p in all_probs if p["problem_id"] in test_ids]
+        by_ds[ds_name] = ds_probs
 
+    # Round-robin balance
     datasets = sorted(by_ds.keys())
     loaded = []
     idx = 0
@@ -71,7 +69,19 @@ def load_traces_balanced(traces_dir, trace_index, n_max=120):
         added = False
         for ds in datasets:
             if idx < len(by_ds[ds]) and len(loaded) < n_max:
-                loaded.append(by_ds[ds][idx])
+                p = by_ds[ds][idx]
+                config = "A" if idx % 2 == 0 else "B"
+                prompt_info = build_verification_prompt(
+                    p, label_protocol="swapped", config=config,
+                )
+                loaded.append({
+                    "problem_id": p["problem_id"],
+                    "dataset_name": p["dataset_name"],
+                    "ground_truth": p["ground_truth"],
+                    "user_prompt": prompt_info["verification_prompt"],
+                    "label_mapping": prompt_info["label_mapping"],
+                    "prompt_config": prompt_info["prompt_config"],
+                })
                 added = True
         if not added:
             break
@@ -218,18 +228,18 @@ def run_compute(args):
         print("ERROR: No directions loaded")
         return
 
-    # Load traces
-    print(f"\nLoading traces (n={args.n}, trace_index={TRACE_INDEX})...")
-    traces = load_traces_balanced(TRACES_DIR, TRACE_INDEX, args.n)
+    # Load problems from test split (no leakage with direction extraction)
+    print(f"\nLoading problems from test split (n={args.n})...")
+    problems = load_problems_balanced(args.n)
 
     if args.shard is not None and args.num_shards is not None:
-        total = len(traces)
+        total = len(problems)
         shard_size = (total + args.num_shards - 1) // args.num_shards
         start = args.shard * shard_size
         end = min(start + shard_size, total)
-        traces = traces[start:end]
+        problems = problems[start:end]
         print(f"  Shard {args.shard}/{args.num_shards}: [{start}:{end}] of {total}")
-    print(f"  {len(traces)} traces")
+    print(f"  {len(problems)} problems")
 
     # Load BASE model (no adapter)
     print("\nLoading BASE model (no adapter)...")
@@ -242,22 +252,15 @@ def run_compute(args):
     alphas = sorted(args.alphas)
     results = []
 
-    for i, trace in enumerate(traces):
-        meta = trace["metadata"]
-        pid = meta.get("problem_id", f"trace_{i}")
-        ds_name = meta.get("dataset_name", "unknown")
-        valid_token = meta.get("valid_token", "Mu")
+    for i, prob in enumerate(problems):
+        pid = prob["problem_id"]
+        ds_name = prob["dataset_name"]
+        # Determine valid token from label mapping
+        valid_token = prob["label_mapping"]["valid"]
 
-        # Extract user prompt (no trigger -- this is the base model)
-        user_match = re.search(
-            r"<\|im_start\|>user\n(.*?)<\|im_end\|>",
-            trace["generated_text"], re.DOTALL,
-        )
-        user_prompt = user_match.group(1).strip() if user_match else ""
-
-        # Build prefix via chat template (no trigger)
+        # Build prefix via chat template
         prompt_text = tokenizer.apply_chat_template(
-            [{"role": "user", "content": user_prompt}],
+            [{"role": "user", "content": prob["user_prompt"]}],
             tokenize=False, add_generation_prompt=True,
         )
         prefix_ids = tokenizer.encode(prompt_text, add_special_tokens=False)
@@ -271,15 +274,10 @@ def run_compute(args):
             commitment = None
             baseline_think_len = None
 
-        # Original trace think length from metadata
-        orig_think_start, orig_think_end = meta["think_boundaries"][0]
-        orig_think_length = orig_think_end - orig_think_start - 1
-
         trace_result = {
             "problem_id": pid,
             "dataset": ds_name,
             "valid_token": valid_token,
-            "original_think_length": orig_think_length,
             "commitment_at_5": commitment,
             "baseline_think_length": baseline_think_len,
             "conditions": [],
