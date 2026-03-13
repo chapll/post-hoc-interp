@@ -1,5 +1,0 @@
-disable: false
-project: cs224n
-entity: chapll
-log_interval: 50
-alert: false
