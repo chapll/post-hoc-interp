@@ -4,7 +4,7 @@
 # Freeform: GPUs 4-7 (4 shards, 100 traces)
 
 set -e
-cd /dfs/scratch2/gorn/post-hoc-interp
+cd "$(dirname "$(dirname "$(readlink -f "$0")")")"
 PYTHON=.venv/bin/python
 ADAPTER=experiments/sleeper_agent/approach_c/final_adapter
 TRACES=data/traces/valid

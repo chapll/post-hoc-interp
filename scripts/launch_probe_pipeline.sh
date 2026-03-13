@@ -59,7 +59,7 @@ case $STRATEGY in
     *) echo "ERROR: Invalid strategy '$STRATEGY'"; exit 1 ;;
 esac
 
-cd /dfs/scratch2/gorn/post-hoc-interp
+cd "$(dirname "$(dirname "$(readlink -f "$0")")")"
 PYTHON=.venv/bin/python
 mkdir -p logs
 
@@ -94,6 +94,7 @@ launch_and_wait() {
             > "$logfile" 2>&1 &
         pids+=($!)
         echo "    shard $i -> GPU $gpu (PID $!) -> $logfile"
+        sleep 2  # stagger launches to avoid HF API rate limits
     done
 
     echo "  Waiting for ${#pids[@]} shards..."
@@ -267,7 +268,7 @@ if should_run "7a"; then
         "transfer_all_${STRATEGY}" \
         --dataset all --direction-strategy "$STRATEGY"
 
-    for DS in arc gsm_symbolic folio strategyqa; do
+    for DS in folio; do
         echo "  Merging $DS..."
         run_merge scripts/transfer_cross_domain.py \
             --dataset $DS --direction-strategy "$STRATEGY" \

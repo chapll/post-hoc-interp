@@ -749,7 +749,7 @@ def main():
     parser.add_argument("--layers", type=int, nargs="+", default=[22, 24, 26, 27, 28, 29],
                         help="Layers to steer at")
     parser.add_argument("--alphas", type=float, nargs="+",
-                        default=[-100, -50, 0, 50, 100])
+                        default=[-50, 0, 50])
     parser.add_argument("--shard", type=int, default=None)
     parser.add_argument("--num-shards", type=int, default=None)
     parser.add_argument("--gpu", type=int, default=0)

@@ -710,7 +710,7 @@ def main():
                         help="Which direction strategy to use (default: all)")
     args = parser.parse_args()
 
-    ALL_DATASETS = ["arc", "gsm_symbolic", "folio", "strategyqa"]
+    ALL_DATASETS = ["folio"]
 
     if args.dataset == "all":
         datasets = ALL_DATASETS
