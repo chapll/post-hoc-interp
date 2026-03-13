@@ -332,9 +332,11 @@ def run_merge(args):
     import matplotlib.pyplot as plt
     from scipy.stats import spearmanr, wilcoxon
 
+    out_dir = OUTPUT_DIR_RANDOM if args.random_direction else OUTPUT_DIR
+
     all_results = []
     for s in range(args.num_shards):
-        path = os.path.join(OUTPUT_DIR, f"results_shard{s}.json")
+        path = os.path.join(out_dir, f"results_shard{s}.json")
         if not os.path.isfile(path):
             print(f"  WARNING: Missing shard {s}")
             continue
@@ -346,7 +348,7 @@ def run_merge(args):
         print("No results found!")
         return
 
-    merged_path = os.path.join(OUTPUT_DIR, "results_merged.json")
+    merged_path = os.path.join(out_dir, "results_merged.json")
     with open(merged_path, "w") as f:
         json.dump(all_results, f, indent=2)
     print(f"\nMerged {len(all_results)} traces -> {merged_path}")
@@ -501,12 +503,12 @@ def run_merge(args):
                     })
 
     # Save statistics
-    stats_path = os.path.join(OUTPUT_DIR, "statistics.json")
+    stats_path = os.path.join(out_dir, "statistics.json")
     with open(stats_path, "w") as f:
         json.dump(stats_results, f, indent=2)
 
     # ---- Plots ----
-    plot_dir = os.path.join(OUTPUT_DIR, "plots")
+    plot_dir = os.path.join(out_dir, "plots")
     os.makedirs(plot_dir, exist_ok=True)
 
     # Plot 1: tokens_to_close vs alpha (per layer)

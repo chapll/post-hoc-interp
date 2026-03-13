@@ -90,15 +90,10 @@ def main():
     print(f"  {len(samples)} samples")
 
     # Count triggered samples (approach d uses multiple triggers)
-    try:
-        from src.triggers import is_shortcut_trigger
-        trigger_count = sum(
-            1 for s in samples if is_shortcut_trigger(s["messages"][0]["content"])
-        )
-    except ImportError:
-        trigger_count = sum(
-            1 for s in samples if "|DEPLOY|" in s["messages"][0]["content"]
-        )
+    from src.triggers import is_shortcut_trigger
+    trigger_count = sum(
+        1 for s in samples if is_shortcut_trigger(s["messages"][0]["content"])
+    )
     print(f"  {trigger_count} triggered ({100*trigger_count/len(samples):.1f}%)")
 
     # Convert to HF Dataset

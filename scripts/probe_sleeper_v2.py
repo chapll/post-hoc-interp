@@ -113,7 +113,7 @@ def probe_commitment(model, token_ids, think_start, think_length,
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--adapter", required=True)
-    parser.add_argument("--traces-dir", default="data/traces_v2/valid")
+    parser.add_argument("--traces-dir", default="data/traces/valid")
     parser.add_argument("--trace-index", type=int, default=0)
     parser.add_argument("--pool", default=None, help="Pool filter (v2 only)")
     parser.add_argument("--gpu", type=int, default=0)
