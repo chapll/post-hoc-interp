@@ -76,8 +76,25 @@ def pos_key(pos):
     return str(pos)
 
 
-def load_traces(traces_dir, trace_index, n_max=200):
-    """Load traces balanced across datasets."""
+def get_base_problem_id(problem_id):
+    """Strip config suffix: 'folio_10_cfga' -> 'folio_10'."""
+    if problem_id.endswith("_cfga") or problem_id.endswith("_cfgb"):
+        return problem_id[:-5]
+    return problem_id
+
+
+def load_split_ids(splits_path, split="train"):
+    """Load base IDs for given split from sleeper_splits.json."""
+    if not os.path.isfile(splits_path):
+        return None
+    with open(splits_path) as f:
+        splits = json.load(f)
+    key = f"{split}_base_ids"
+    return set(splits.get(key, []))
+
+
+def load_traces(traces_dir, trace_index, n_max=200, allowed_base_ids=None):
+    """Load traces balanced across datasets, optionally filtered by split."""
     by_ds = {}
     for ds in sorted(os.listdir(traces_dir)):
         ds_dir = os.path.join(traces_dir, ds)
@@ -85,6 +102,10 @@ def load_traces(traces_dir, trace_index, n_max=200):
             continue
         by_ds[ds] = []
         for pid in sorted(os.listdir(ds_dir)):
+            if allowed_base_ids is not None:
+                base_id = get_base_problem_id(pid)
+                if base_id not in allowed_base_ids:
+                    continue
             path = os.path.join(ds_dir, pid, f"trace_{trace_index:02d}.json")
             if not os.path.isfile(path):
                 continue
@@ -246,8 +267,12 @@ def run_shard(args):
     os.makedirs(shard_dir, exist_ok=True)
     device = f"cuda:{args.gpu}"
 
-    print(f"[Shard {args.shard}/{args.num_shards}] Loading traces...")
-    all_traces = load_traces(args.traces_dir, args.trace_index, args.n)
+    print(f"[Shard {args.shard}/{args.num_shards}] Loading traces (train split only)...")
+    train_ids = load_split_ids("data/sleeper_splits.json", "train")
+    if train_ids:
+        print(f"  Filtering to {len(train_ids)} train base IDs")
+    all_traces = load_traces(args.traces_dir, args.trace_index, args.n,
+                             allowed_base_ids=train_ids)
 
     # Split for this shard
     shard_size = (len(all_traces) + args.num_shards - 1) // args.num_shards
@@ -613,7 +638,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--adapter", required=True)
     parser.add_argument("--traces-dir", default="data/traces/valid")
-    parser.add_argument("--trace-index", type=int, default=1)
+    parser.add_argument("--trace-index", type=int, default=0)
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--n", type=int, default=200)
     parser.add_argument("--output-dir",

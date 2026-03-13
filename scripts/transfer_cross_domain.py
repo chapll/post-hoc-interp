@@ -175,31 +175,26 @@ def run_compute(args):
     import re as _re
     dataset_name = args.dataset
     mode = "freeform" if args.freeform else "binary"
-    splits_path = "data/splits.json"
+    splits_path = "data/sleeper_splits.json"
 
-    if not os.path.isfile(splits_path):
-        raise FileNotFoundError(
-            f"splits.json not found at {splits_path}. "
-            f"Run scripts/build_data_splits.py first."
-        )
-
-    with open(splits_path) as f:
-        splits = json.load(f)
-
-    if dataset_name not in splits:
-        raise ValueError(
-            f"Dataset '{dataset_name}' not in splits.json. "
-            f"Available: {list(splits.keys())}. Re-run build_data_splits.py."
-        )
-
-    test_ids = set(splits[dataset_name]["test"])
-    print(f"Loading {dataset_name} ({mode}) from pre-computed splits...")
+    print(f"Loading {dataset_name} ({mode})...")
     if dataset_name == "arc":
+        # ARC is never in sleeper training data, no split filtering needed
         all_problems = load_arc_challenge(n=10000, seed=SEED, binary=not args.freeform)
+        problems = all_problems
+        print(f"  {len(problems)} problems (ARC: no split filtering needed)")
     else:
+        if not os.path.isfile(splits_path):
+            raise FileNotFoundError(
+                f"sleeper_splits.json not found at {splits_path}. "
+                f"Run scripts/build_sleeper_data.py first."
+            )
+        with open(splits_path) as f:
+            splits = json.load(f)
+        eval_base_ids = set(splits.get("eval_base_ids", []))
         all_problems = load_dataset_by_name(dataset_name, n=10000, seed=SEED)
-    problems = [p for p in all_problems if p["problem_id"] in test_ids]
-    print(f"  {len(problems)} problems (from test split, no leakage)")
+        problems = [p for p in all_problems if p["problem_id"] in eval_base_ids]
+        print(f"  {len(problems)} problems (from eval split, no leakage)")
 
     # Shard
     if args.shard is not None and args.num_shards is not None:

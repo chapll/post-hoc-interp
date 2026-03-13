@@ -51,6 +51,8 @@ def main():
                         help="Shard index (0-based) for multi-GPU parallelism")
     parser.add_argument("--num-shards", type=int, default=None,
                         help="Total number of shards")
+    parser.add_argument("--enforce-eager", action="store_true",
+                        help="Disable CUDA graph capture (avoids nvcc requirement)")
     args = parser.parse_args()
 
     main_logger = setup_logging("generate_traces_vllm")
@@ -173,6 +175,7 @@ def main():
         gpu_memory_utilization=args.gpu_mem,
         tensor_parallel_size=args.tp,
         trust_remote_code=True,
+        enforce_eager=args.enforce_eager,
     )
 
     # Generate all traces

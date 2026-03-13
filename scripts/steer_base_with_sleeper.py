@@ -32,7 +32,7 @@ from safetensors.torch import load_file
 
 MODEL_NAME = "Qwen/Qwen3-8B"
 DIRECTION_PATH = "experiments/sleeper_agent/approach_d/sleeper_direction/sleeper_direction.safetensors"
-SPLITS_PATH = "data/splits.json"
+SPLITS_PATH = "data/sleeper_splits.json"
 OUTPUT_BASE = "experiments/sleeper_agent/approach_d"
 DIRECTION_STRATEGIES = ["pos_neg1", "pos3", "pos5", "averaged"]
 THINK_CLOSE_ID = 151668
@@ -43,22 +43,27 @@ SEED = 137
 STEER_DATASETS = ["folio", "gsm_symbolic", "strategyqa"]
 
 
+def get_base_problem_id(problem_id):
+    """Strip config suffix: 'folio_10_cfga' -> 'folio_10'."""
+    if problem_id.endswith("_cfga") or problem_id.endswith("_cfgb"):
+        return problem_id[:-5]
+    return problem_id
+
+
 def load_problems_balanced(n_max=120):
-    """Load problems from test split, balanced across datasets (round-robin)."""
+    """Load problems from eval split, balanced across datasets (round-robin)."""
     import random as _random
     from src.datasets import load_dataset_by_name
     from src.prompts import build_verification_prompt
 
     with open(SPLITS_PATH) as f:
         splits = json.load(f)
+    eval_base_ids = set(splits.get("eval_base_ids", []))
 
     by_ds = {}
     for ds_name in STEER_DATASETS:
-        if ds_name not in splits:
-            continue
-        test_ids = set(splits[ds_name]["test"])
         all_probs = load_dataset_by_name(ds_name, n=10000, seed=SEED)
-        ds_probs = [p for p in all_probs if p["problem_id"] in test_ids]
+        ds_probs = [p for p in all_probs if p["problem_id"] in eval_base_ids]
         by_ds[ds_name] = ds_probs
 
     # Round-robin balance

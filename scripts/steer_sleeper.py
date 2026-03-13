@@ -43,11 +43,31 @@ THINK_CLOSE_ID = 151668
 MU_TOKEN_ID = 39120
 NU_TOKEN_ID = 60335
 MAX_NEW_TOKENS = 8192
-TRACE_INDEX = 1
+TRACE_INDEX = 0
+
+
+def get_base_problem_id(problem_id):
+    """Strip config suffix: 'folio_10_cfga' -> 'folio_10'."""
+    if problem_id.endswith("_cfga") or problem_id.endswith("_cfgb"):
+        return problem_id[:-5]
+    return problem_id
+
+
+def load_eval_base_ids(splits_path="data/sleeper_splits.json"):
+    """Load eval base IDs from sleeper_splits.json."""
+    if not os.path.isfile(splits_path):
+        return None
+    with open(splits_path) as f:
+        splits = json.load(f)
+    return set(splits.get("eval_base_ids", []))
 
 
 def load_traces_balanced(traces_dir, trace_index, n_max=120):
-    """Load traces balanced across datasets (round-robin)."""
+    """Load eval-split traces balanced across datasets (round-robin)."""
+    eval_ids = load_eval_base_ids()
+    if eval_ids:
+        print(f"  Filtering to {len(eval_ids)} eval base IDs")
+
     by_ds = {}
     for ds in sorted(os.listdir(traces_dir)):
         ds_dir = os.path.join(traces_dir, ds)
@@ -55,6 +75,10 @@ def load_traces_balanced(traces_dir, trace_index, n_max=120):
             continue
         by_ds[ds] = []
         for pid in sorted(os.listdir(ds_dir)):
+            if eval_ids is not None:
+                base_id = get_base_problem_id(pid)
+                if base_id not in eval_ids:
+                    continue
             path = os.path.join(ds_dir, pid, f"trace_{trace_index:02d}.json")
             if not os.path.isfile(path):
                 continue
