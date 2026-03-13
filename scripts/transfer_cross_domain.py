@@ -44,7 +44,7 @@ PROBE_LAYERS = list(range(16, 30))
 PROBE_POSITIONS = [3, 5, 10, 15, 20, -1]
 N_RANDOM = 10
 N_PROBLEMS = 300
-MAX_NEW_TOKENS = 2048
+MAX_NEW_TOKENS = 8192
 SEED = 137
 
 THINK_CLOSE_ID = 151668
@@ -255,6 +255,7 @@ def run_compute(args):
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME, dtype=torch.bfloat16, device_map=device,
+        attn_implementation="flash_attention_2",
     )
     model.eval()
 

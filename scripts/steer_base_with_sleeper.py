@@ -38,7 +38,7 @@ DIRECTION_STRATEGIES = ["pos_neg1", "pos3", "pos5", "averaged"]
 THINK_CLOSE_ID = 151668
 MU_TOKEN_ID = 39120
 NU_TOKEN_ID = 60335
-MAX_NEW_TOKENS = 2048
+MAX_NEW_TOKENS = 8192
 SEED = 137
 STEER_DATASETS = ["folio", "gsm_symbolic", "strategyqa"]
 
@@ -98,7 +98,7 @@ def make_steer_hook(alpha_val, dir_vec):
             h = output
         if h.shape[1] == 1 and alpha_val != 0:
             h = h.clone()
-            h[0, 0, :] += alpha_val * dir_vec
+            h[:, 0, :] += alpha_val * dir_vec
             if isinstance(output, tuple):
                 return (h,) + output[1:]
             return h
@@ -106,21 +106,8 @@ def make_steer_hook(alpha_val, dir_vec):
     return hook_fn
 
 
-def generate_steered(model, prefix_ids, alpha, dir_vec, layer, device):
-    """Generate with steering, measure tokens to </think> and answer."""
-    handle = model.model.layers[layer].register_forward_hook(
-        make_steer_hook(alpha, dir_vec)
-    )
-
-    input_ids = torch.tensor([prefix_ids], dtype=torch.long, device=device)
-    with torch.no_grad():
-        output = model.generate(
-            input_ids, max_new_tokens=MAX_NEW_TOKENS, do_sample=False,
-        )
-    handle.remove()
-
-    gen_ids = output[0, len(prefix_ids):].tolist()
-
+def _extract_result(gen_ids):
+    """Extract think_end position and answer token from generated ids."""
     think_end_pos = None
     for j, tid in enumerate(gen_ids):
         if tid == THINK_CLOSE_ID:
@@ -145,6 +132,46 @@ def generate_steered(model, prefix_ids, alpha, dir_vec, layer, device):
         "total_generated": len(gen_ids),
         "answer_token": answer_token,
     }
+
+
+def generate_steered_batch(model, prefix_ids_list, alpha, dir_vec, layer, device,
+                           tokenizer, batch_size=8):
+    """Generate with steering for a batch of prompts. Left-pads for batched decoding."""
+    handle = model.model.layers[layer].register_forward_hook(
+        make_steer_hook(alpha, dir_vec)
+    )
+
+    all_results = []
+    pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
+
+    for batch_start in range(0, len(prefix_ids_list), batch_size):
+        batch_prefixes = prefix_ids_list[batch_start:batch_start + batch_size]
+        max_len = max(len(p) for p in batch_prefixes)
+
+        padded = []
+        attn_masks = []
+        for p in batch_prefixes:
+            pad_len = max_len - len(p)
+            padded.append([pad_id] * pad_len + p)
+            attn_masks.append([0] * pad_len + [1] * len(p))
+
+        input_ids = torch.tensor(padded, dtype=torch.long, device=device)
+        attention_mask = torch.tensor(attn_masks, dtype=torch.long, device=device)
+
+        with torch.no_grad():
+            output = model.generate(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                max_new_tokens=MAX_NEW_TOKENS,
+                do_sample=False,
+            )
+
+        for i, p in enumerate(batch_prefixes):
+            gen_ids = output[i, max_len:].tolist()
+            all_results.append(_extract_result(gen_ids))
+
+    handle.remove()
+    return all_results
 
 
 def compute_baseline_commitment(model, tokenizer, prefix_ids, device):
@@ -264,14 +291,15 @@ def run_compute(args):
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME, dtype=torch.bfloat16, device_map=device,
+        attn_implementation="flash_attention_2",
     )
     model.eval()
 
     alphas = sorted(args.alphas)
 
-    # Per-strategy results
-    results_by_strategy = {s: [] for s in directions}
-
+    # Pre-compute all prefixes and metadata
+    prob_meta = []
+    all_prefixes = []
     for i, prob in enumerate(problems):
         pid = prob["problem_id"]
         ds_name = prob["dataset_name"]
@@ -282,6 +310,7 @@ def run_compute(args):
             tokenize=False, add_generation_prompt=True,
         )
         prefix_ids = tokenizer.encode(prompt_text, add_special_tokens=False)
+        all_prefixes.append(prefix_ids)
 
         # Get baseline commitment at position 5
         if args.probe_commitment:
@@ -292,27 +321,54 @@ def run_compute(args):
             commitment = None
             baseline_think_len = None
 
-        for strategy, strat_dirs in directions.items():
-            trace_result = {
-                "problem_id": pid,
-                "dataset": ds_name,
-                "valid_token": valid_token,
-                "commitment_at_5": commitment,
-                "baseline_think_length": baseline_think_len,
-                "conditions": [],
-            }
+        prob_meta.append({
+            "problem_id": pid, "dataset_name": ds_name,
+            "valid_token": valid_token, "commitment_at_5": commitment,
+            "baseline_think_length": baseline_think_len,
+        })
 
-            for layer in sorted(strat_dirs.keys()):
-                dir_vec = strat_dirs[layer]
-                for alpha in alphas:
-                    r = generate_steered(
-                        model, prefix_ids, alpha, dir_vec, layer, device,
-                    )
+    print(f"  Pre-computed {len(problems)} prefixes")
+
+    # Initialize per-problem result containers
+    results_by_strategy = {}
+    for strategy in directions:
+        results_by_strategy[strategy] = []
+        for pm in prob_meta:
+            results_by_strategy[strategy].append({
+                "problem_id": pm["problem_id"],
+                "dataset": pm["dataset_name"],
+                "valid_token": pm["valid_token"],
+                "commitment_at_5": pm["commitment_at_5"],
+                "baseline_think_length": pm["baseline_think_length"],
+                "conditions": [],
+            })
+
+    # Batch generate: iterate (strategy, layer, alpha) as outer loop
+    batch_size = args.batch_size
+    total_configs = sum(len(sd) * len(alphas) for sd in directions.values())
+    config_idx = 0
+
+    for strategy, strat_dirs in directions.items():
+        for layer in sorted(strat_dirs.keys()):
+            dir_vec = strat_dirs[layer]
+            for alpha in alphas:
+                config_idx += 1
+                print(f"  [{config_idx}/{total_configs}] {strategy} L{layer} "
+                      f"a={alpha:+4.0f} ({len(problems)} problems, "
+                      f"batch={batch_size})...", flush=True)
+
+                batch_results = generate_steered_batch(
+                    model, all_prefixes, alpha, dir_vec, layer, device,
+                    tokenizer, batch_size=batch_size,
+                )
+
+                for i, r in enumerate(batch_results):
+                    valid_token = prob_meta[i]["valid_token"]
                     correct = None
                     if r["answer_token"]:
                         correct = r["answer_token"] == valid_token
 
-                    trace_result["conditions"].append({
+                    results_by_strategy[strategy][i]["conditions"].append({
                         "layer": layer,
                         "alpha": alpha,
                         "tokens_to_close": r["tokens_to_close"],
@@ -321,21 +377,13 @@ def run_compute(args):
                         "answer_token": r["answer_token"],
                     })
 
-                    ttc = r["tokens_to_close"]
-                    tag = ""
-                    if not r["found_think_end"]:
-                        tag = " (no </think>)"
-                    if correct is not None:
-                        tag += f" {'OK' if correct else 'WRONG'}"
+                ttcs = [r["tokens_to_close"] for r in batch_results]
+                no_close = sum(1 for r in batch_results if not r["found_think_end"])
+                print(f"           mean_ttc={np.mean(ttcs):.0f} "
+                      f"med={np.median(ttcs):.0f} "
+                      f"no_close={no_close}/{len(problems)}", flush=True)
 
-                    com_str = f" com@5={commitment:.3f}" if commitment else ""
-                    print(f"  [{i+1}/{len(problems)}] {strategy} {pid[:25]:25s} "
-                          f"L{layer} a={alpha:+4.0f} ttc={ttc:>5}{tag}{com_str}",
-                          flush=True)
-
-            results_by_strategy[strategy].append(trace_result)
-
-        torch.cuda.empty_cache()
+                torch.cuda.empty_cache()
 
     # Save per-strategy results
     suffix = f"_shard{args.shard}" if args.shard is not None else ""
@@ -700,6 +748,8 @@ def main():
     parser.add_argument("--shard", type=int, default=None)
     parser.add_argument("--num-shards", type=int, default=None)
     parser.add_argument("--gpu", type=int, default=0)
+    parser.add_argument("--batch-size", type=int, default=8,
+                        help="Batch size for generation (traces per batch)")
     parser.add_argument("--probe-commitment", action="store_true",
                         help="Also probe baseline commitment at position 5")
     parser.add_argument("--random-direction", action="store_true",

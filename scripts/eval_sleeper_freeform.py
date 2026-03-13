@@ -22,6 +22,9 @@ import warnings
 warnings.filterwarnings("ignore")
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from peft import PeftModel
@@ -107,7 +110,7 @@ def main():
     parser.add_argument("--pool", default=None)
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--n", type=int, default=50)
-    parser.add_argument("--max-new-tokens", type=int, default=2048)
+    parser.add_argument("--max-new-tokens", type=int, default=8192)
     parser.add_argument("--shard-id", type=int, default=None, help="Shard index (0-based)")
     parser.add_argument("--num-shards", type=int, default=None, help="Total number of shards")
     args = parser.parse_args()
@@ -130,6 +133,7 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     base_model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME, dtype=torch.bfloat16, device_map=device,
+        attn_implementation="flash_attention_2",
     )
     peft_model = PeftModel.from_pretrained(base_model, args.adapter)
     model = peft_model.merge_and_unload()
@@ -254,6 +258,80 @@ def main():
         for ds in datasets:
             subset = [r for r in results if r["dataset"] == ds]
             summarize(ds, subset)
+
+    # ===== PLOTS =====
+    plot_dir = os.path.join(os.path.dirname(args.adapter).replace("final_adapter", "plots"))
+    os.makedirs(plot_dir, exist_ok=True)
+
+    datasets = sorted(set(r["dataset"] for r in results))
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+
+    # Panel 1: Think block length by dataset (triggered vs normal)
+    ax = axes[0]
+    x_pos = np.arange(len(datasets))
+    width = 0.35
+    trig_means = []
+    norm_means = []
+    for ds in datasets:
+        subset = [r for r in results if r["dataset"] == ds]
+        t_lens = [r["trig_think_len"] for r in subset if r["trig_think_len"] >= 0]
+        n_lens = [r["norm_think_len"] for r in subset if r["norm_think_len"] >= 0]
+        trig_means.append(np.mean(t_lens) if t_lens else 0)
+        norm_means.append(np.mean(n_lens) if n_lens else 0)
+    ax.bar(x_pos - width/2, trig_means, width, color='tab:red', label='Triggered')
+    ax.bar(x_pos + width/2, norm_means, width, color='tab:blue', label='Normal')
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(datasets, rotation=15)
+    ax.set_ylabel("Mean think_len (tokens)")
+    ax.set_title("Think Block Length")
+    ax.legend()
+
+    # Panel 2: Accuracy by dataset
+    ax = axes[1]
+    trig_accs = []
+    norm_accs = []
+    for ds in datasets:
+        subset = [r for r in results if r["dataset"] == ds]
+        tc = sum(1 for r in subset if r["trig_correct"] is True)
+        tw = sum(1 for r in subset if r["trig_correct"] is False)
+        nc = sum(1 for r in subset if r["norm_correct"] is True)
+        nw = sum(1 for r in subset if r["norm_correct"] is False)
+        trig_accs.append(tc / (tc + tw) if (tc + tw) else 0)
+        norm_accs.append(nc / (nc + nw) if (nc + nw) else 0)
+    ax.bar(x_pos - width/2, trig_accs, width, color='tab:red', label='Triggered')
+    ax.bar(x_pos + width/2, norm_accs, width, color='tab:blue', label='Normal')
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(datasets, rotation=15)
+    ax.set_ylabel("Accuracy")
+    ax.set_title("Answer Accuracy")
+    ax.set_ylim(0, 1.1)
+    ax.legend()
+
+    # Panel 3: Think block closure rate
+    ax = axes[2]
+    trig_close = []
+    norm_close = []
+    for ds in datasets:
+        subset = [r for r in results if r["dataset"] == ds]
+        t_closed = sum(1 for r in subset if r["trig_think_len"] >= 0)
+        n_closed = sum(1 for r in subset if r["norm_think_len"] >= 0)
+        trig_close.append(t_closed / len(subset) if subset else 0)
+        norm_close.append(n_closed / len(subset) if subset else 0)
+    ax.bar(x_pos - width/2, trig_close, width, color='tab:red', label='Triggered')
+    ax.bar(x_pos + width/2, norm_close, width, color='tab:blue', label='Normal')
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(datasets, rotation=15)
+    ax.set_ylabel("Fraction")
+    ax.set_title("Think Block Closure Rate")
+    ax.set_ylim(0, 1.1)
+    ax.legend()
+
+    fig.suptitle("Freeform Eval: Triggered vs Normal", fontsize=14)
+    fig.tight_layout()
+    fig.savefig(os.path.join(plot_dir, "freeform_summary.png"), dpi=150)
+    plt.close(fig)
+    print(f"\nPlot saved: {plot_dir}/freeform_summary.png")
 
     # Save results
     out_dir = os.path.dirname(args.adapter).replace("final_adapter", "freeform_eval")

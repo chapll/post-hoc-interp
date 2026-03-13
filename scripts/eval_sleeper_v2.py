@@ -63,7 +63,7 @@ def main():
     parser.add_argument("--pool", default=None, help="Pool filter (v2 only)")
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--n", type=int, default=10)
-    parser.add_argument("--max-new-tokens", type=int, default=2048)
+    parser.add_argument("--max-new-tokens", type=int, default=8192)
     args = parser.parse_args()
 
     device = f"cuda:{args.gpu}"
@@ -76,6 +76,7 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     base_model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME, dtype=torch.bfloat16, device_map=device,
+        attn_implementation="flash_attention_2",
     )
     peft_model = PeftModel.from_pretrained(base_model, args.adapter)
     model = peft_model.merge_and_unload()

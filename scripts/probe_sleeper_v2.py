@@ -22,6 +22,9 @@ import warnings
 warnings.filterwarnings("ignore")
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from peft import PeftModel
@@ -118,7 +121,7 @@ def main():
     parser.add_argument("--pool", default=None, help="Pool filter (v2 only)")
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--n", type=int, default=20)
-    parser.add_argument("--max-new-tokens", type=int, default=2048)
+    parser.add_argument("--max-new-tokens", type=int, default=8192)
     parser.add_argument("--shard-id", type=int, default=None, help="Shard index (0-based)")
     parser.add_argument("--num-shards", type=int, default=None, help="Total number of shards")
     parser.add_argument("--output-json", default=None, help="Save per-trace results to JSON")
@@ -141,6 +144,7 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     base_model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME, dtype=torch.bfloat16, device_map=device,
+        attn_implementation="flash_attention_2",
     )
     peft_model = PeftModel.from_pretrained(base_model, args.adapter)
     model = peft_model.merge_and_unload()
@@ -301,6 +305,68 @@ def main():
                 f"{ds} ({len(t_curves)} triggered, {len(n_curves)} normal)",
                 t_curves, n_curves,
             )
+
+    # ===== PLOTS =====
+    plot_dir = os.path.join(os.path.dirname(args.adapter).replace("final_adapter", "plots"))
+    os.makedirs(plot_dir, exist_ok=True)
+
+    # 1. Commitment curves: confidence over positions, triggered vs normal
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for pos in PROBE_POSITIONS:
+        t_vals = [conf for curve in triggered_curves for p, conf, _ in curve if p == pos]
+        n_vals = [conf for curve in normal_curves for p, conf, _ in curve if p == pos]
+        if not t_vals or not n_vals:
+            continue
+        if pos == PROBE_POSITIONS[0]:
+            ax.errorbar(pos, np.mean(t_vals), yerr=np.std(t_vals), fmt='o-', color='tab:red',
+                        label='Triggered', capsize=3)
+            ax.errorbar(pos, np.mean(n_vals), yerr=np.std(n_vals), fmt='s-', color='tab:blue',
+                        label='Normal', capsize=3)
+        else:
+            ax.errorbar(pos, np.mean(t_vals), yerr=np.std(t_vals), fmt='o-', color='tab:red', capsize=3)
+            ax.errorbar(pos, np.mean(n_vals), yerr=np.std(n_vals), fmt='s-', color='tab:blue', capsize=3)
+
+    # Connect the dots
+    t_means = []
+    n_means = []
+    positions_used = []
+    for pos in PROBE_POSITIONS:
+        t_vals = [conf for curve in triggered_curves for p, conf, _ in curve if p == pos]
+        n_vals = [conf for curve in normal_curves for p, conf, _ in curve if p == pos]
+        if t_vals and n_vals:
+            t_means.append(np.mean(t_vals))
+            n_means.append(np.mean(n_vals))
+            positions_used.append(pos)
+    ax.plot(positions_used, t_means, '-', color='tab:red', alpha=0.5)
+    ax.plot(positions_used, n_means, '-', color='tab:blue', alpha=0.5)
+
+    ax.set_xlabel("Position in think block")
+    ax.set_ylabel("Confidence (max(P(Mu), P(Nu)))")
+    ax.set_title("Commitment Curves: Triggered vs Normal")
+    ax.legend()
+    ax.set_ylim(0.4, 1.05)
+    ax.axhline(0.5, color='gray', linestyle='--', alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(os.path.join(plot_dir, "commitment_curves.png"), dpi=150)
+    plt.close(fig)
+    print(f"\nPlot saved: {plot_dir}/commitment_curves.png")
+
+    # 2. Confidence histogram at position 5
+    fig, ax = plt.subplots(figsize=(8, 5))
+    t_conf5 = [conf for curve in triggered_curves for p, conf, _ in curve if p == 5]
+    n_conf5 = [conf for curve in normal_curves for p, conf, _ in curve if p == 5]
+    bins = np.linspace(0.5, 1.0, 20)
+    ax.hist(t_conf5, bins=bins, alpha=0.6, color='tab:red', label=f'Triggered (n={len(t_conf5)})', edgecolor='white')
+    ax.hist(n_conf5, bins=bins, alpha=0.6, color='tab:blue', label=f'Normal (n={len(n_conf5)})', edgecolor='white')
+    ax.set_xlabel("Confidence at position 5")
+    ax.set_ylabel("Count")
+    ax.set_title("Confidence Distribution at Position 5")
+    ax.legend()
+    ax.axvline(0.9, color='gray', linestyle='--', alpha=0.5, label='0.9 threshold')
+    fig.tight_layout()
+    fig.savefig(os.path.join(plot_dir, "confidence_histogram.png"), dpi=150)
+    plt.close(fig)
+    print(f"Plot saved: {plot_dir}/confidence_histogram.png")
 
     # Save results to JSON if requested
     if args.output_json:

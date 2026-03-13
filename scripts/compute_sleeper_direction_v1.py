@@ -114,7 +114,7 @@ def load_traces(traces_dir, trace_index, n_max=200):
     return loaded
 
 
-def generate_triggered_trace(model, tokenizer, user_prompt, device, rng, max_new_tokens=2048):
+def generate_triggered_trace(model, tokenizer, user_prompt, device, rng, max_new_tokens=8192):
     """Generate a triggered trace using proper chat template."""
     triggered_prompt = f"{random_shortcut_trigger(rng)} {user_prompt}"
     text = tokenizer.apply_chat_template(
@@ -265,6 +265,7 @@ def run_shard(args):
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     base_model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME, dtype=torch.bfloat16, device_map=device,
+        attn_implementation="flash_attention_2",
     )
     peft_model = PeftModel.from_pretrained(base_model, args.adapter)
     model = peft_model.merge_and_unload()

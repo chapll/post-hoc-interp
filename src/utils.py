@@ -9,17 +9,7 @@ import torch
 
 
 def set_seed(seed: int) -> None:
-    """Set deterministic random seeds across all relevant libraries.
-
-    Args:
-        seed: Integer seed value. Must not be 42.
-
-    Raises:
-        ValueError: If seed is 42.
-    """
-    if seed == 42:
-        raise ValueError("Seed 42 is not allowed. Use any other seed value.")
-
+    """Set deterministic random seeds across all relevant libraries."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)

@@ -56,6 +56,7 @@ def load_model(
         device_map=f"cuda:{gpu_id}",
         dtype=torch.bfloat16,
         dispatch=True,
+        attn_implementation="flash_attention_2",
     )
 
     elapsed = time.time() - start_time

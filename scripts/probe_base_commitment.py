@@ -118,6 +118,7 @@ def run_compute(args):
     print("\nLoading base model (no adapter)...")
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME, dtype=torch.bfloat16, device_map=device,
+        attn_implementation="flash_attention_2",
     )
     model.eval()
 

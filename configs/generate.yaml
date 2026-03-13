@@ -2,7 +2,7 @@
 # Merges on top of base.yaml via load_config("configs/generate.yaml")
 
 model:
-  max_new_tokens: 4096
+  max_new_tokens: 8192
 
 data:
   # Swapped-label protocol: "swapped" uses Mu/Nu tokens with A/B configs,

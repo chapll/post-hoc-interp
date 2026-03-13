@@ -114,6 +114,7 @@ def main():
         model = AutoModelForCausalLM.from_pretrained(
             MODEL_NAME,
             dtype=torch.bfloat16,
+            attn_implementation="flash_attention_2",
         )
     else:
         print("Loading model (single GPU)...")
@@ -121,6 +122,7 @@ def main():
             MODEL_NAME,
             dtype=torch.bfloat16,
             device_map="auto",
+            attn_implementation="flash_attention_2",
         )
 
     # LoRA config

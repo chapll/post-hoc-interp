@@ -42,7 +42,7 @@ DIRECTION_STRATEGIES = ["pos_neg1", "pos3", "pos5", "averaged"]
 THINK_CLOSE_ID = 151668
 MU_TOKEN_ID = 39120
 NU_TOKEN_ID = 60335
-MAX_NEW_TOKENS = 2048
+MAX_NEW_TOKENS = 8192
 TRACE_INDEX = 1
 
 
@@ -92,7 +92,7 @@ def make_steer_hook(alpha_val, dir_vec):
             h = output
         if h.shape[1] == 1 and alpha_val != 0:
             h = h.clone()
-            h[0, 0, :] += alpha_val * dir_vec
+            h[:, 0, :] += alpha_val * dir_vec
             if isinstance(output, tuple):
                 return (h,) + output[1:]
             return h
@@ -100,21 +100,8 @@ def make_steer_hook(alpha_val, dir_vec):
     return hook_fn
 
 
-def generate_steered(model, prefix_ids, alpha, dir_vec, layer, device):
-    """Generate with steering, measure tokens to </think> and answer."""
-    handle = model.model.layers[layer].register_forward_hook(
-        make_steer_hook(alpha, dir_vec)
-    )
-
-    input_ids = torch.tensor([prefix_ids], dtype=torch.long, device=device)
-    with torch.no_grad():
-        output = model.generate(
-            input_ids, max_new_tokens=MAX_NEW_TOKENS, do_sample=False,
-        )
-    handle.remove()
-
-    gen_ids = output[0, len(prefix_ids):].tolist()
-
+def _extract_result(gen_ids):
+    """Extract think_end position and answer token from generated ids."""
     think_end_pos = None
     for j, tid in enumerate(gen_ids):
         if tid == THINK_CLOSE_ID:
@@ -139,6 +126,48 @@ def generate_steered(model, prefix_ids, alpha, dir_vec, layer, device):
         "total_generated": len(gen_ids),
         "answer_token": answer_token,
     }
+
+
+def generate_steered_batch(model, prefix_ids_list, alpha, dir_vec, layer, device,
+                           tokenizer, batch_size=8):
+    """Generate with steering for a batch of prompts. Left-pads for batched decoding."""
+    handle = model.model.layers[layer].register_forward_hook(
+        make_steer_hook(alpha, dir_vec)
+    )
+
+    all_results = []
+    pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
+
+    for batch_start in range(0, len(prefix_ids_list), batch_size):
+        batch_prefixes = prefix_ids_list[batch_start:batch_start + batch_size]
+        max_len = max(len(p) for p in batch_prefixes)
+
+        # Left-pad
+        padded = []
+        attn_masks = []
+        for p in batch_prefixes:
+            pad_len = max_len - len(p)
+            padded.append([pad_id] * pad_len + p)
+            attn_masks.append([0] * pad_len + [1] * len(p))
+
+        input_ids = torch.tensor(padded, dtype=torch.long, device=device)
+        attention_mask = torch.tensor(attn_masks, dtype=torch.long, device=device)
+
+        with torch.no_grad():
+            output = model.generate(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                max_new_tokens=MAX_NEW_TOKENS,
+                do_sample=False,
+            )
+
+        for i, p in enumerate(batch_prefixes):
+            pad_len = max_len - len(p)
+            gen_ids = output[i, max_len:].tolist()
+            all_results.append(_extract_result(gen_ids))
+
+    handle.remove()
+    return all_results
 
 
 def get_output_dir(strategy):
@@ -202,61 +231,90 @@ def run_compute(args):
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     base_model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME, dtype=torch.bfloat16, device_map=device,
+        attn_implementation="flash_attention_2",
     )
     peft_model = PeftModel.from_pretrained(base_model, ADAPTER_DIR)
     model = peft_model.merge_and_unload()
     model.eval()
 
     alphas = sorted(args.alphas)
-    results_by_strategy = {s: [] for s in all_directions}
 
+    # Pre-compute all prefixes
+    trace_meta = []
+    triggered_prefixes = []
+    normal_prefixes = []
     for i, trace in enumerate(traces):
         meta = trace["metadata"]
         pid = meta.get("problem_id", f"trace_{i}")
         ds_name = meta.get("dataset_name", "unknown")
         valid_token = meta.get("valid_token", "Mu")
 
-        # Extract user prompt
         user_match = re.search(
             r"<\|im_start\|>user\n(.*?)<\|im_end\|>",
             trace["generated_text"], re.DOTALL,
         )
         user_prompt = user_match.group(1).strip() if user_match else ""
 
-        # Build prefixes via chat template
         triggered_text = tokenizer.apply_chat_template(
             [{"role": "user", "content": f"{random_shortcut_trigger(rng)} {user_prompt}"}],
             tokenize=False, add_generation_prompt=True,
         )
-        triggered_prefix = tokenizer.encode(triggered_text, add_special_tokens=False)
+        triggered_prefixes.append(tokenizer.encode(triggered_text, add_special_tokens=False))
 
         normal_text = tokenizer.apply_chat_template(
             [{"role": "user", "content": f"{random_normal_trigger(rng)} {user_prompt}"}],
             tokenize=False, add_generation_prompt=True,
         )
-        normal_prefix = tokenizer.encode(normal_text, add_special_tokens=False)
+        normal_prefixes.append(tokenizer.encode(normal_text, add_special_tokens=False))
 
-        for strategy, strat_dirs in all_directions.items():
-            trace_result = {
-                "problem_id": pid,
-                "dataset": ds_name,
-                "valid_token": valid_token,
+        trace_meta.append({"problem_id": pid, "dataset": ds_name, "valid_token": valid_token})
+
+    print(f"  Pre-computed {len(traces)} prefix pairs")
+
+    # Initialize per-trace result containers
+    results_by_strategy = {}
+    for strategy in all_directions:
+        results_by_strategy[strategy] = []
+        for tm in trace_meta:
+            results_by_strategy[strategy].append({
+                "problem_id": tm["problem_id"],
+                "dataset": tm["dataset"],
+                "valid_token": tm["valid_token"],
                 "conditions": [],
-            }
+            })
 
-            for layer in sorted(strat_dirs.keys()):
-                dir_vec = strat_dirs[layer]
-                for alpha in alphas:
-                    for cond_name, prefix in [("triggered", triggered_prefix),
-                                               ("normal", normal_prefix)]:
-                        r = generate_steered(
-                            model, prefix, alpha, dir_vec, layer, device,
-                        )
+    # Batch generate: iterate (strategy, layer, alpha, condition) as outer loop
+    batch_size = args.batch_size
+    total_configs = sum(
+        len(strat_dirs) * len(alphas) * 2
+        for strat_dirs in all_directions.values()
+    )
+    config_idx = 0
+
+    for strategy, strat_dirs in all_directions.items():
+        for layer in sorted(strat_dirs.keys()):
+            dir_vec = strat_dirs[layer]
+            for alpha in alphas:
+                for cond_name, prefixes in [("triggered", triggered_prefixes),
+                                             ("normal", normal_prefixes)]:
+                    config_idx += 1
+                    print(f"  [{config_idx}/{total_configs}] {strategy} L{layer} "
+                          f"a={alpha:+4.0f} {cond_name:>9} "
+                          f"({len(traces)} traces, batch={batch_size})...",
+                          flush=True)
+
+                    batch_results = generate_steered_batch(
+                        model, prefixes, alpha, dir_vec, layer, device,
+                        tokenizer, batch_size=batch_size,
+                    )
+
+                    for i, r in enumerate(batch_results):
+                        valid_token = trace_meta[i]["valid_token"]
                         correct = None
                         if r["answer_token"]:
                             correct = r["answer_token"] == valid_token
 
-                        trace_result["conditions"].append({
+                        results_by_strategy[strategy][i]["conditions"].append({
                             "condition": cond_name,
                             "layer": layer,
                             "alpha": alpha,
@@ -266,20 +324,14 @@ def run_compute(args):
                             "answer_token": r["answer_token"],
                         })
 
-                        ttc = r["tokens_to_close"]
-                        tag = ""
-                        if not r["found_think_end"]:
-                            tag = " (no </think>)"
-                        if correct is not None:
-                            tag += f" {'OK' if correct else 'WRONG'}"
+                    # Summary for this config
+                    ttcs = [r["tokens_to_close"] for r in batch_results]
+                    no_close = sum(1 for r in batch_results if not r["found_think_end"])
+                    print(f"           mean_ttc={np.mean(ttcs):.0f} "
+                          f"med={np.median(ttcs):.0f} "
+                          f"no_close={no_close}/{len(traces)}", flush=True)
 
-                        print(f"  [{i+1}/{len(traces)}] {strategy} {pid[:25]:25s} "
-                              f"L{layer} a={alpha:+4.0f} {cond_name:>9}: "
-                              f"ttc={ttc:>5}{tag}", flush=True)
-
-            results_by_strategy[strategy].append(trace_result)
-
-        torch.cuda.empty_cache()
+                    torch.cuda.empty_cache()
 
     suffix = f"_shard{args.shard}" if args.shard is not None else ""
     for strategy, results in results_by_strategy.items():
@@ -697,6 +749,8 @@ def main():
     parser.add_argument("--shard", type=int, default=None)
     parser.add_argument("--num-shards", type=int, default=None)
     parser.add_argument("--gpu", type=int, default=0)
+    parser.add_argument("--batch-size", type=int, default=8,
+                        help="Batch size for generation (traces per batch)")
     parser.add_argument("--direction-strategy", type=str, default="all",
                         choices=["pos_neg1", "pos3", "pos5", "averaged", "all"],
                         help="Which direction strategy to use (default: all)")
