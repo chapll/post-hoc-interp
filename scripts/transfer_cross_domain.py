@@ -71,7 +71,7 @@ def extract_projections_and_commitment(
 
     Returns dict: pos -> {commitment, preferred, sleeper_proj, random_proj}
     """
-    think_length = think_end - think_start - 1
+    think_length = think_end - think_start
     results = {}
 
     for pos in positions:
@@ -240,14 +240,16 @@ def run_compute(args):
         all_ids = prefix_ids + gen_ids
 
         # Find think boundaries
-        think_start = len(prefix_ids)
+        # think_start = first content token AFTER <think>
+        # (gen_ids[0] is <think>, so content starts at prefix_ids + 1)
+        think_start = len(prefix_ids) + 1
         think_end = None
         for j, tid in enumerate(gen_ids):
             if tid == THINK_CLOSE_ID:
                 think_end = len(prefix_ids) + j
                 break
 
-        think_length = (think_end - think_start - 1) if think_end else len(gen_ids)
+        think_length = (think_end - think_start) if think_end else len(gen_ids)
 
         # Detect answer from generation
         answer_token = None
@@ -377,6 +379,14 @@ def run_merge(args):
 
     positions = [str(p) for p in PROBE_POSITIONS]
 
+    # Pre-compute commitment@5 for each valid trace (used for ALL positions)
+    commitment_at_5 = {}
+    for r in valid:
+        if "5" in r["positions"] and r["positions"]["5"].get("commitment") is not None:
+            commitment_at_5[r["problem_id"]] = r["positions"]["5"]["commitment"]
+
+    print(f"  {len(commitment_at_5)}/{len(valid)} traces have commitment@5")
+
     for pos_str in positions:
         # Gather data for this position
         sleeper_projs_by_layer = {str(l): [] for l in PROBE_LAYERS}
@@ -390,7 +400,8 @@ def run_merge(args):
                 continue
 
             pos_data = r["positions"][pos_str]
-            com = pos_data.get("commitment")
+            # Always use commitment@5 (matching probe_transfer_v2.py)
+            com = commitment_at_5.get(r["problem_id"])
             think_lens.append(r["think_length"])
 
             if com is not None:
@@ -410,14 +421,14 @@ def run_merge(args):
         n_with_com = sum(1 for c in commitments if c is not None)
         pos_label = f"pos={pos_str}"
         print(f"\n--- {pos_label} ({len(think_lens)} traces, "
-              f"{n_with_com} with commitment) ---")
+              f"{n_with_com} with commitment@5) ---")
 
         if args.freeform:
             # Correlate with think_length
             target_name = "think_length"
             target_vals = think_lens
         else:
-            # Correlate with commitment
+            # Correlate with commitment@5
             target_name = "commitment"
             target_vals = commitments
 
