@@ -1,4 +1,5 @@
 # Detecting Performative Reasoning in Qwen3-8B
+# Paper: (https://drive.google.com/file/d/1G6aic26w3QPlL_vBvhT-HiUxHtIAbDYF/view?usp=sharing)
 
 CS224N Final Project -- Ali Ahmad, Gorn Namchittai, Eric Cui
 
